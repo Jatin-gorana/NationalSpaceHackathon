@@ -1,0 +1,150 @@
+{
+  "simulation_time_step_hours": 24.0,
+  "timestamp": "2026-03-09T06:02:13.728869",
+  "physics_model": {
+    "coordinate_system": "ECI (Earth-Centered Inertial)",
+    "integration_method": "Runge-Kutta 4",
+    "timestep_seconds": 10,
+    "gravitational_constant": "\u03bc = 398600.4418 km\u00b3/s\u00b2"
+  },
+  "collision_detection": {
+    "algorithm": "KDTree spatial indexing",
+    "search_radius_km": 50.0,
+    "collision_threshold_meters": 100.0,
+    "total_collisions": 0,
+    "critical_collisions": 0,
+    "warning_collisions": 0
+  },
+  "predicted_collisions": [],
+  "satellite_states": [
+    {
+      "object_id": "SAT-001",
+      "current_position": [
+        7000.0,
+        0.0,
+        0.0
+      ],
+      "current_velocity": [
+        0.0,
+        7.5,
+        0.0
+      ],
+      "predicted_position": [
+        5870.211264717036,
+        3787.919768973742,
+        0.0
+      ],
+      "predicted_velocity": [
+        -4.116565204750062,
+        6.287129986519553,
+        0.0
+      ],
+      "prediction_time_hours": 24.0,
+      "trajectory_points": 8640
+    },
+    {
+      "object_id": "SAT-002",
+      "current_position": [
+        6900.0,
+        500.0,
+        100.0
+      ],
+      "current_velocity": [
+        0.1,
+        7.6,
+        0.05
+      ],
+      "predicted_position": [
+        6855.975452464796,
+        1378.7657477610778,
+        105.00149805423949
+      ],
+      "predicted_velocity": [
+        -0.8498386587041504,
+        7.4706031124126,
+        0.03584692934740698
+      ],
+      "prediction_time_hours": 24.0,
+      "trajectory_points": 8640
+    }
+  ],
+  "debris_states": [
+    {
+      "object_id": "DEB-001",
+      "current_position": [
+        7000.0,
+        50.0,
+        10.0
+      ],
+      "current_velocity": [
+        0.05,
+        7.48,
+        0.01
+      ],
+      "predicted_position": [
+        2095.6470497598507,
+        6684.788299447045,
+        11.847383137253109
+      ],
+      "predicted_velocity": [
+        -7.160033927921729,
+        2.144535246953952,
+        -0.007314049012678009
+      ],
+      "size_estimate": 1.0
+    },
+    {
+      "object_id": "DEB-002",
+      "current_position": [
+        6950.0,
+        300.0,
+        80.0
+      ],
+      "current_velocity": [
+        0.08,
+        7.55,
+        0.03
+      ],
+      "predicted_position": [
+        6311.779444037788,
+        3279.37971971811,
+        84.24018628859722
+      ],
+      "predicted_velocity": [
+        -3.09548420328353,
+        6.701316521665869,
+        -0.009294394156649373
+      ],
+      "size_estimate": 1.0
+    },
+    {
+      "object_id": "DEB-003",
+      "current_position": [
+        7100.0,
+        -200.0,
+        50.0
+      ],
+      "current_velocity": [
+        -0.02,
+        7.45,
+        0.02
+      ],
+      "predicted_position": [
+        -74.24111013615742,
+        -7240.325942134894,
+        -20.103956962272655
+      ],
+      "predicted_velocity": [
+        7.303412702929786,
+        -0.16044386920251935,
+        0.05155492256446493
+      ],
+      "size_estimate": 1.0
+    }
+  ],
+  "system_summary": {
+    "total_satellites": 2,
+    "total_debris": 3,
+    "satellites_at_risk": 0
+  }
+}
