@@ -170,6 +170,35 @@ function OrbitLine({ position, velocity, color = "#00ffff" }) {
   )
 }
 
+function CollisionWarningLine({ satellitePos, debrisPos }) {
+  if (!satellitePos || !debrisPos || satellitePos.length !== 3 || debrisPos.length !== 3) {
+    return null
+  }
+
+  const points = [
+    satellitePos[0] * VISUAL_SCALE,
+    satellitePos[1] * VISUAL_SCALE,
+    satellitePos[2] * VISUAL_SCALE,
+    debrisPos[0] * VISUAL_SCALE,
+    debrisPos[1] * VISUAL_SCALE,
+    debrisPos[2] * VISUAL_SCALE
+  ]
+
+  return (
+    <line>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          count={2}
+          array={new Float32Array(points)}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial color="#ff0000" linewidth={2} transparent opacity={0.6} />
+    </line>
+  )
+}
+
 function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
   const [stats, setStats] = useState({ satellites: 0, debris: 0 })
 
@@ -183,6 +212,23 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
   const satellitesAtRisk = useMemo(() => {
     return new Set(collisions.map(c => c.satellite_id))
   }, [collisions])
+
+  // Create map of satellite and debris positions for collision lines
+  const collisionLines = useMemo(() => {
+    const lines = []
+    for (const collision of collisions) {
+      const sat = satellites.find(s => s.object_id === collision.satellite_id)
+      const deb = debris.find(d => d.object_id === collision.debris_id)
+      if (sat && deb) {
+        lines.push({
+          satellitePos: sat.position,
+          debrisPos: deb.position,
+          severity: collision.severity
+        })
+      }
+    }
+    return lines
+  }, [collisions, satellites, debris])
 
   // Limit debris rendering for performance (show closest 100)
   const visibleDebris = useMemo(() => {
@@ -242,6 +288,15 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
             key={deb.object_id}
             position={deb.position}
             size={deb.size_estimate || 1}
+          />
+        ))}
+
+        {/* Collision Warning Lines */}
+        {collisionLines.map((line, idx) => (
+          <CollisionWarningLine
+            key={`collision-${idx}`}
+            satellitePos={line.satellitePos}
+            debrisPos={line.debrisPos}
           />
         ))}
 

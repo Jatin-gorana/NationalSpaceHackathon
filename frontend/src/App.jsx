@@ -35,7 +35,7 @@ function App() {
           try {
             const data = JSON.parse(event.data)
             
-            // Transform data
+            // Use enhanced collision data directly from backend
             const transformedData = {
               status: {
                 total_satellites: data.satellites?.length || 0,
@@ -47,13 +47,7 @@ function App() {
               satellites: data.satellites || [],
               debris: data.debris || [],
               threats: data.threats || 0,
-              collisions: data.satellites
-                ?.filter(s => s.at_risk)
-                .map(s => ({
-                  satellite_id: s.object_id,
-                  severity: s.status === 'critical' ? 'critical' : 'warning',
-                  min_distance_meters: s.status === 'critical' ? 50 : 500
-                })) || []
+              collisions: data.collisions || []  // Use enhanced collision data from backend
             }
             
             setSystemData(transformedData)

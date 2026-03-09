@@ -17,9 +17,11 @@ class SimulationEngine:
         self.mu = 398600.4418  # Earth's gravitational parameter km^3/s^2
         self.collision_risks = set()
         self.threat_count = 0
+        self.predicted_collisions = []  # Store predicted collisions with full details
+        self.last_prediction_time = 0  # Track when we last ran prediction
         
     def generate_initial_constellation(self):
-        """Generate 50 satellites and 500 debris objects with some collision scenarios"""
+        """Generate 50 satellites and 500 debris objects with persistent collision scenarios"""
         print("🛰️  Generating initial constellation...")
         
         # Generate 50 satellites in various LEO orbits
@@ -81,23 +83,23 @@ class SimulationEngine:
             )
             telemetry_service.update_debris(debris)
         
-        # Create intentional collision scenarios for 5-10 satellites
+        # Create PERSISTENT collision scenarios for 15 satellites
         satellites = telemetry_service.get_all_satellites()
-        debris_objects = telemetry_service.get_all_debris()
         
-        # Place debris on collision course with first 5 satellites
+        print("⚠️  Creating persistent collision scenarios...")
+        
+        # Strategy 1: Debris on converging orbits (5 satellites)
         for i in range(min(5, len(satellites))):
             sat = satellites[i]
-            # Create debris slightly ahead in orbit
             sat_pos = np.array(sat.position)
             sat_vel = np.array(sat.velocity)
             
-            # Place debris 5 km ahead on collision course
-            collision_debris_pos = sat_pos + sat_vel * 0.5  # 0.5 seconds ahead
-            collision_debris_vel = sat_vel * 1.01  # Slightly faster
+            # Place debris on converging orbit (opposite direction, same altitude)
+            collision_debris_pos = sat_pos + sat_vel * 2.0  # 2 seconds ahead
+            collision_debris_vel = -sat_vel * 0.98  # Opposite direction, slightly slower
             
             collision_debris = Debris(
-                object_id=f"DEB-RISK-{i+1:03d}",
+                object_id=f"DEB-CONVERGE-{i+1:03d}",
                 position=collision_debris_pos.tolist(),
                 velocity=collision_debris_vel.tolist(),
                 timestamp=datetime.utcnow(),
@@ -105,9 +107,52 @@ class SimulationEngine:
             )
             telemetry_service.update_debris(collision_debris)
         
+        # Strategy 2: Debris on crossing orbital planes (5 satellites)
+        for i in range(5, min(10, len(satellites))):
+            sat = satellites[i]
+            sat_pos = np.array(sat.position)
+            sat_vel = np.array(sat.velocity)
+            
+            # Create debris with perpendicular velocity (crossing orbit)
+            radial = sat_pos / np.linalg.norm(sat_pos)
+            perpendicular = np.cross(sat_vel, radial)
+            perpendicular = perpendicular / np.linalg.norm(perpendicular)
+            
+            # Place debris on crossing path
+            collision_debris_pos = sat_pos + perpendicular * 5.0  # 5 km offset
+            collision_debris_vel = sat_vel + perpendicular * 0.5  # Crossing velocity
+            
+            collision_debris = Debris(
+                object_id=f"DEB-CROSS-{i+1:03d}",
+                position=collision_debris_pos.tolist(),
+                velocity=collision_debris_vel.tolist(),
+                timestamp=datetime.utcnow(),
+                size_estimate=1.5
+            )
+            telemetry_service.update_debris(collision_debris)
+        
+        # Strategy 3: Debris on same orbit, catching up (5 satellites)
+        for i in range(10, min(15, len(satellites))):
+            sat = satellites[i]
+            sat_pos = np.array(sat.position)
+            sat_vel = np.array(sat.velocity)
+            
+            # Place debris behind, moving faster
+            collision_debris_pos = sat_pos - sat_vel * 3.0  # 3 seconds behind
+            collision_debris_vel = sat_vel * 1.02  # 2% faster (catching up)
+            
+            collision_debris = Debris(
+                object_id=f"DEB-CHASE-{i+1:03d}",
+                position=collision_debris_pos.tolist(),
+                velocity=collision_debris_vel.tolist(),
+                timestamp=datetime.utcnow(),
+                size_estimate=2.5
+            )
+            telemetry_service.update_debris(collision_debris)
+        
         print(f"✅ Generated {len(telemetry_service.get_all_satellites())} satellites")
         print(f"✅ Generated {len(telemetry_service.get_all_debris())} debris objects")
-        print(f"⚠️  Created 5 collision scenarios for testing")
+        print(f"⚠️  Created 15 persistent collision scenarios (converging, crossing, chasing)")
     
     def rk4_step(self, position: np.ndarray, velocity: np.ndarray, dt: float) -> tuple:
         """RK4 integration step for orbital dynamics"""
@@ -166,7 +211,7 @@ class SimulationEngine:
             telemetry_service.update_debris(debris)
     
     def detect_collisions(self):
-        """Fast collision detection using KDTree"""
+        """Fast collision detection using KDTree with enhanced details"""
         satellites = telemetry_service.get_all_satellites()
         debris_objects = telemetry_service.get_all_debris()
         
@@ -179,6 +224,7 @@ class SimulationEngine:
         
         self.collision_risks.clear()
         self.threat_count = 0
+        collision_details = {}  # Store detailed collision info
         
         # Check each satellite
         for satellite in satellites:
@@ -188,41 +234,82 @@ class SimulationEngine:
             indices = tree.query_ball_point(sat_pos, 10.0)
             
             min_distance = float('inf')
+            closest_debris_id = None
+            
             for idx in indices:
                 deb_pos = debris_positions[idx]
                 distance = np.linalg.norm(sat_pos - deb_pos)
-                min_distance = min(min_distance, distance)
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_debris_id = debris_objects[idx].object_id
             
-            # Update satellite status
+            # Update satellite status and store collision details
             if min_distance < COLLISION_THRESHOLD:  # 100 meters
                 satellite.status = "critical"
                 self.collision_risks.add(satellite.object_id)
                 self.threat_count += 1
+                collision_details[satellite.object_id] = {
+                    "debris_id": closest_debris_id,
+                    "min_distance_km": min_distance,
+                    "min_distance_meters": min_distance * 1000,
+                    "severity": "critical"
+                }
             elif min_distance < 1.0:  # 1 km warning
                 satellite.status = "warning"
                 self.collision_risks.add(satellite.object_id)
+                collision_details[satellite.object_id] = {
+                    "debris_id": closest_debris_id,
+                    "min_distance_km": min_distance,
+                    "min_distance_meters": min_distance * 1000,
+                    "severity": "warning"
+                }
             else:
                 satellite.status = "operational"
             
             telemetry_service.update_satellite(satellite)
+        
+        # Store collision details for WebSocket broadcast
+        self.current_collision_details = collision_details
+    
+    async def predict_conjunctions(self):
+        """Run conjunction prediction every 10 seconds"""
+        from services.collision_detector import collision_detector
+        
+        try:
+            # Run full conjunction prediction (24 hours ahead)
+            predicted = collision_detector.detect_collisions(hours_ahead=24)
+            self.predicted_collisions = predicted
+            print(f"🔮 Predicted {len(predicted)} conjunctions in next 24 hours")
+        except Exception as e:
+            print(f"❌ Conjunction prediction error: {e}")
+            self.predicted_collisions = []
     
     async def simulation_loop(self):
         """Main simulation loop - updates every 50ms"""
         print("🚀 Starting simulation loop (20 Hz)...")
         
+        iteration = 0
+        
         while self.running:
             try:
-                # Physics update
+                # Physics update (every iteration)
                 self.propagate_orbits()
                 
-                # Collision detection
+                # Collision detection (every iteration)
                 self.detect_collisions()
+                
+                # Conjunction prediction (every 10 seconds = 200 iterations)
+                if iteration % 200 == 0:
+                    await self.predict_conjunctions()
                 
                 # Wait for next update
                 await asyncio.sleep(self.update_interval)
+                iteration += 1
                 
             except Exception as e:
                 print(f"❌ Simulation error: {e}")
+                import traceback
+                traceback.print_exc()
                 await asyncio.sleep(self.update_interval)
     
     async def start(self):
@@ -246,9 +333,29 @@ class SimulationEngine:
             print("🛑 Simulation engine stopped")
     
     def get_state(self) -> Dict:
-        """Get current simulation state"""
+        """Get current simulation state with enhanced collision details"""
         satellites = telemetry_service.get_all_satellites()
         debris = telemetry_service.get_all_debris()
+        
+        # Build collision list with full details
+        collisions = []
+        if hasattr(self, 'current_collision_details'):
+            for sat_id, details in self.current_collision_details.items():
+                collisions.append({
+                    "satellite_id": sat_id,
+                    "debris_id": details.get("debris_id"),
+                    "min_distance_km": details.get("min_distance_km"),
+                    "min_distance_meters": details.get("min_distance_meters"),
+                    "severity": details.get("severity"),
+                    "tca_hours": 0.0  # Current collision (TCA = now)
+                })
+        
+        # Add predicted collisions
+        if hasattr(self, 'predicted_collisions'):
+            for pred in self.predicted_collisions[:10]:  # Top 10 predicted
+                # Only add if not already in current collisions
+                if not any(c['satellite_id'] == pred['satellite_id'] for c in collisions):
+                    collisions.append(pred)
         
         return {
             "satellites": [
@@ -272,6 +379,7 @@ class SimulationEngine:
                 for deb in debris
             ],
             "threats": self.threat_count,
+            "collisions": collisions,  # Enhanced with full details
             "timestamp": datetime.utcnow().isoformat()
         }
     
