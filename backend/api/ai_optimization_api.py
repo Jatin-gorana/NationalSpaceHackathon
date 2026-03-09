@@ -179,3 +179,54 @@ async def get_ai_status():
             "Constraint handling"
         ]
     }
+
+@router.post("/ai/auto-resolve")
+async def auto_resolve_collisions():
+    """
+    Automatically resolve all collision risks using AI optimization
+    Applies maneuvers to satellites at risk to avoid collisions
+    """
+    from services.simulation_engine import simulation_engine
+    
+    # Get satellites at risk
+    satellites = telemetry_service.get_all_satellites()
+    at_risk_satellites = [sat for sat in satellites if sat.object_id in simulation_engine.collision_risks]
+    
+    if not at_risk_satellites:
+        return {
+            "status": "no_risks",
+            "message": "No collision risks detected",
+            "satellites_resolved": 0
+        }
+    
+    resolved = []
+    
+    for satellite in at_risk_satellites:
+        # Calculate avoidance maneuver (simple: perpendicular to velocity)
+        import numpy as np
+        vel = np.array(satellite.velocity)
+        vel_mag = np.linalg.norm(vel)
+        
+        # Create perpendicular delta-v (0.05 km/s = 50 m/s)
+        perpendicular = np.array([-vel[1], vel[0], 0])
+        if np.linalg.norm(perpendicular) > 0:
+            perpendicular = perpendicular / np.linalg.norm(perpendicular)
+        delta_v = perpendicular * 0.05  # 50 m/s maneuver
+        
+        # Apply maneuver
+        success = simulation_engine.apply_maneuver(satellite.object_id, delta_v.tolist())
+        
+        if success:
+            resolved.append({
+                "satellite_id": satellite.object_id,
+                "delta_v": delta_v.tolist(),
+                "fuel_remaining": satellite.fuel_remaining
+            })
+    
+    return {
+        "status": "resolved",
+        "message": f"Applied avoidance maneuvers to {len(resolved)} satellites",
+        "satellites_resolved": len(resolved),
+        "total_at_risk": len(at_risk_satellites),
+        "maneuvers": resolved
+    }

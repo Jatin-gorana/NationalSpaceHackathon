@@ -31,36 +31,33 @@ function Earth() {
 }
 
 function Satellite({ position, id, hasCollision }) {
+  const groupRef = useRef()
   const meshRef = useRef()
   
+  // Update position every frame
   useFrame(() => {
+    if (groupRef.current && position && position.length === 3) {
+      const scaledPos = [
+        position[0] * VISUAL_SCALE,
+        position[1] * VISUAL_SCALE,
+        position[2] * VISUAL_SCALE
+      ]
+      groupRef.current.position.set(scaledPos[0], scaledPos[1], scaledPos[2])
+    }
+    
+    // Pulse effect for collision risk
     if (meshRef.current && hasCollision) {
       meshRef.current.material.emissiveIntensity = 
-        0.5 + Math.sin(Date.now() * 0.01) * 0.5
+        0.8 + Math.sin(Date.now() * 0.01) * 0.4
     }
   })
 
   if (!position || position.length !== 3) {
-    console.warn(`Invalid position for ${id}:`, position)
     return null
   }
 
-  // Scale position from km to Three.js units
-  const scaledPos = [
-    position[0] * VISUAL_SCALE,
-    position[1] * VISUAL_SCALE,
-    position[2] * VISUAL_SCALE
-  ]
-  
-  // Debug: log first satellite position
-  if (id === 'SAT-001') {
-    console.log('SAT-001 position (km):', position)
-    console.log('SAT-001 scaled:', scaledPos)
-    console.log('SAT-001 distance from origin:', Math.sqrt(scaledPos[0]**2 + scaledPos[1]**2 + scaledPos[2]**2))
-  }
-
   return (
-    <group position={scaledPos}>
+    <group ref={groupRef}>
       <mesh ref={meshRef}>
         <boxGeometry args={[0.3, 0.3, 0.3]} />
         <meshStandardMaterial 
@@ -83,18 +80,25 @@ function Satellite({ position, id, hasCollision }) {
   )
 }
 
-function Debris({ position, size }) {
-  if (!position || position.length !== 3) return null
+function Debris({ position }) {
+  const meshRef = useRef()
   
-  // Scale position from km to Three.js units
-  const scaledPos = [
-    position[0] * VISUAL_SCALE,
-    position[1] * VISUAL_SCALE,
-    position[2] * VISUAL_SCALE
-  ]
+  // Update position every frame
+  useFrame(() => {
+    if (meshRef.current && position && position.length === 3) {
+      const scaledPos = [
+        position[0] * VISUAL_SCALE,
+        position[1] * VISUAL_SCALE,
+        position[2] * VISUAL_SCALE
+      ]
+      meshRef.current.position.set(scaledPos[0], scaledPos[1], scaledPos[2])
+    }
+  })
+
+  if (!position || position.length !== 3) return null
 
   return (
-    <mesh position={scaledPos}>
+    <mesh ref={meshRef}>
       <sphereGeometry args={[0.08, 8, 8]} />
       <meshStandardMaterial 
         color="#ff6600"
@@ -174,12 +178,6 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
       satellites: satellites.length,
       debris: debris.length
     })
-    
-    // Debug: log data arrival
-    if (satellites.length > 0) {
-      console.log('📊 Received satellites:', satellites.length)
-      console.log('📊 First satellite:', satellites[0])
-    }
   }, [satellites, debris])
 
   const satellitesAtRisk = useMemo(() => {
@@ -221,12 +219,6 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
 
         {/* Earth */}
         <Earth />
-        
-        {/* Test satellite at fixed position */}
-        <mesh position={[14, 0, 0]}>
-          <boxGeometry args={[0.3, 0.3, 0.3]} />
-          <meshStandardMaterial color="#ffff00" emissive="#ffff00" emissiveIntensity={1.0} />
-        </mesh>
 
         {/* Satellites with orbit lines */}
         {satellites.map((sat) => (

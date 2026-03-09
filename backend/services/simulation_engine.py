@@ -19,7 +19,7 @@ class SimulationEngine:
         self.threat_count = 0
         
     def generate_initial_constellation(self):
-        """Generate 50 satellites and 500 debris objects"""
+        """Generate 50 satellites and 500 debris objects with some collision scenarios"""
         print("🛰️  Generating initial constellation...")
         
         # Generate 50 satellites in various LEO orbits
@@ -81,8 +81,33 @@ class SimulationEngine:
             )
             telemetry_service.update_debris(debris)
         
+        # Create intentional collision scenarios for 5-10 satellites
+        satellites = telemetry_service.get_all_satellites()
+        debris_objects = telemetry_service.get_all_debris()
+        
+        # Place debris on collision course with first 5 satellites
+        for i in range(min(5, len(satellites))):
+            sat = satellites[i]
+            # Create debris slightly ahead in orbit
+            sat_pos = np.array(sat.position)
+            sat_vel = np.array(sat.velocity)
+            
+            # Place debris 5 km ahead on collision course
+            collision_debris_pos = sat_pos + sat_vel * 0.5  # 0.5 seconds ahead
+            collision_debris_vel = sat_vel * 1.01  # Slightly faster
+            
+            collision_debris = Debris(
+                object_id=f"DEB-RISK-{i+1:03d}",
+                position=collision_debris_pos.tolist(),
+                velocity=collision_debris_vel.tolist(),
+                timestamp=datetime.utcnow(),
+                size_estimate=2.0
+            )
+            telemetry_service.update_debris(collision_debris)
+        
         print(f"✅ Generated {len(telemetry_service.get_all_satellites())} satellites")
         print(f"✅ Generated {len(telemetry_service.get_all_debris())} debris objects")
+        print(f"⚠️  Created 5 collision scenarios for testing")
     
     def rk4_step(self, position: np.ndarray, velocity: np.ndarray, dt: float) -> tuple:
         """RK4 integration step for orbital dynamics"""
@@ -249,6 +274,28 @@ class SimulationEngine:
             "threats": self.threat_count,
             "timestamp": datetime.utcnow().isoformat()
         }
+    
+    def apply_maneuver(self, satellite_id: str, delta_v: List[float]):
+        """Apply a maneuver to a satellite (change velocity)"""
+        satellites = telemetry_service.get_all_satellites()
+        for sat in satellites:
+            if sat.object_id == satellite_id:
+                # Apply delta-v to velocity
+                sat.velocity = [
+                    sat.velocity[0] + delta_v[0],
+                    sat.velocity[1] + delta_v[1],
+                    sat.velocity[2] + delta_v[2]
+                ]
+                
+                # Deduct fuel (simplified: 1 m/s costs 0.1% fuel)
+                delta_v_mag = np.linalg.norm(delta_v)
+                fuel_cost = delta_v_mag * 0.1
+                sat.fuel_remaining = max(0, sat.fuel_remaining - fuel_cost)
+                
+                telemetry_service.update_satellite(sat)
+                print(f"✅ Applied maneuver to {satellite_id}: ΔV={delta_v}, Fuel remaining: {sat.fuel_remaining:.1f}%")
+                return True
+        return False
 
 # Global instance
 simulation_engine = SimulationEngine()
