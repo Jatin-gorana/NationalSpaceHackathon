@@ -6,7 +6,11 @@ Satellite collision avoidance and orbital management system for monitoring 50+ s
 
 - Real-time telemetry ingestion for satellites and debris
 - 24-hour collision prediction using RK4 orbital propagation
-- Collision detection with 100m threshold using KDTree spatial indexing
+- Earth-Centered Inertial (ECI) coordinate system
+- High-precision 10-second timestep integration
+- Optimized collision detection with KDTree spatial indexing (O(N log N))
+- Time of Closest Approach (TCA) computation
+- 50 km search radius with 100m collision threshold
 - Automated maneuver planning for collision avoidance
 - Station-keeping to maintain satellites within 10km of assigned slots
 - Fuel-optimized maneuver calculations
@@ -54,6 +58,7 @@ API will be available at `http://localhost:8000`
 ### Simulation
 - `POST /api/simulate/propagate` - Propagate orbit trajectory
 - `POST /api/simulate/predict` - Predict position at time
+- `POST /api/simulate/step` - Run complete simulation with collision detection
 
 ## Example Usage
 
@@ -74,6 +79,42 @@ curl http://localhost:8000/api/collisions?hours_ahead=24
 
 # Plan maneuvers
 curl -X POST http://localhost:8000/api/maneuvers/plan/SAT-001
+
+# Run simulation step
+curl -X POST http://localhost:8000/api/simulate/step \
+  -H "Content-Type: application/json" \
+  -d '{"simulation_time_step": 24.0}'
+```
+
+## Physics Model
+
+The system uses scientifically accurate orbital mechanics:
+
+- Coordinate System: Earth-Centered Inertial (ECI)
+- Integration Method: Runge-Kutta 4th order (RK4)
+- Timestep: 10 seconds (high precision)
+- Gravitational Model: d²r/dt² = -μr / |r|³
+  - μ = 398600.4418 km³/s² (Earth's gravitational parameter)
+
+## Collision Detection Algorithm
+
+Optimized spatial indexing for efficient collision detection:
+
+1. Propagate all objects using RK4 (10s timestep)
+2. Build KDTree for debris positions at each timestep
+3. Query satellites within 50 km search radius (O(N log N))
+4. Compute Time of Closest Approach (TCA) for close pairs
+5. Flag collisions if minimum distance < 100 meters
+
+This approach avoids O(N²) brute-force checks and scales efficiently to thousands of objects.
+
+## Testing
+
+Run the test simulation:
+
+```bash
+cd backend
+python test_simulation.py
 ```
 
 ## Architecture
