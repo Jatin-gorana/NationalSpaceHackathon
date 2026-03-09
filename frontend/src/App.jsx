@@ -9,15 +9,14 @@ function App() {
   const [systemData, setSystemData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [wsConnected, setWsConnected] = useState(false)
-  const [debugInfo, setDebugInfo] = useState('')
+  const [updateCount, setUpdateCount] = useState(0)
 
   useEffect(() => {
-    // WebSocket connection for real-time updates
+    // WebSocket connection for real-time updates (20 Hz)
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.hostname}:8000/ws`
+    const wsUrl = `${protocol}//${window.location.hostname}:8000/ws/simulation`
     
-    console.log('Connecting to WebSocket:', wsUrl)
-    setDebugInfo(`Connecting to ${wsUrl}...`)
+    console.log('🔌 Connecting to WebSocket:', wsUrl)
     
     let ws = null
     let reconnectTimeout = null
@@ -27,22 +26,16 @@ function App() {
         ws = new WebSocket(wsUrl)
 
         ws.onopen = () => {
-          console.log('✅ WebSocket connected')
+          console.log('✅ WebSocket connected - receiving 20 Hz updates')
           setWsConnected(true)
           setLoading(false)
-          setDebugInfo('Connected! Receiving data...')
         }
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data)
-            console.log('📡 Received data:', {
-              satellites: data.satellites?.length,
-              debris: data.debris?.length,
-              collisionRisks: data.collision_risks?.length
-            })
             
-            // Transform data to match expected format
+            // Transform data
             const transformedData = {
               status: {
                 total_satellites: data.satellites?.length || 0,
@@ -53,6 +46,7 @@ function App() {
               },
               satellites: data.satellites || [],
               debris: data.debris || [],
+              threats: data.threats || 0,
               collisions: data.satellites
                 ?.filter(s => s.at_risk)
                 .map(s => ({
@@ -63,45 +57,39 @@ function App() {
             }
             
             setSystemData(transformedData)
-            setDebugInfo(`Live: ${transformedData.satellites.length} sats, ${transformedData.debris.length} debris`)
+            setUpdateCount(prev => prev + 1)
           } catch (error) {
-            console.error('❌ Error parsing WebSocket message:', error)
-            setDebugInfo(`Parse error: ${error.message}`)
+            console.error('❌ Parse error:', error)
           }
         }
 
         ws.onerror = (error) => {
           console.error('❌ WebSocket error:', error)
           setWsConnected(false)
-          setDebugInfo('Connection error')
         }
 
         ws.onclose = () => {
           console.log('🔌 WebSocket disconnected')
           setWsConnected(false)
-          setDebugInfo('Disconnected. Reconnecting...')
           
-          // Attempt to reconnect after 3 seconds
+          // Reconnect after 3 seconds
           reconnectTimeout = setTimeout(() => {
-            console.log('🔄 Attempting to reconnect...')
+            console.log('🔄 Reconnecting...')
             connect()
           }, 3000)
         }
 
-        // Send ping every 30 seconds to keep connection alive
+        // Ping every 30 seconds
         const pingInterval = setInterval(() => {
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send('ping')
           }
         }, 30000)
 
-        return () => {
-          clearInterval(pingInterval)
-        }
+        return () => clearInterval(pingInterval)
       } catch (error) {
-        console.error('❌ WebSocket connection error:', error)
+        console.error('❌ Connection error:', error)
         setWsConnected(false)
-        setDebugInfo(`Connection failed: ${error.message}`)
       }
     }
 
@@ -109,9 +97,7 @@ function App() {
 
     return () => {
       if (reconnectTimeout) clearTimeout(reconnectTimeout)
-      if (ws) {
-        ws.close()
-      }
+      if (ws) ws.close()
     }
   }, [])
 
@@ -122,11 +108,8 @@ function App() {
           <div className="text-cyan-400 text-2xl animate-pulse mb-4">
             INITIALIZING ACM SYSTEM...
           </div>
-          <div className="text-gray-400 text-sm mb-2">
-            Generating constellation and starting simulation...
-          </div>
-          <div className="text-gray-500 text-xs">
-            {debugInfo}
+          <div className="text-gray-400 text-sm">
+            Generating 50 satellites and 500 debris objects...
           </div>
         </div>
       </div>
@@ -143,7 +126,7 @@ function App() {
               ACM MISSION CONTROL
             </h1>
             <p className="text-sm text-gray-400">
-              Autonomous Constellation Manager v2.1 - Real-time Simulation
+              Real-Time Simulation • 20 Hz Updates • {updateCount} frames
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -154,7 +137,7 @@ function App() {
                 wsConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'
               }`} />
               <span className="text-xs text-gray-300">
-                {wsConnected ? 'LIVE' : 'DISCONNECTED'}
+                {wsConnected ? 'LIVE 20Hz' : 'DISCONNECTED'}
               </span>
             </div>
             <SystemStatus data={systemData} />
@@ -182,7 +165,6 @@ function App() {
             <div className="flex items-center justify-center h-full">
               <div className="text-center text-gray-400">
                 <div className="text-xl mb-2">Waiting for simulation data...</div>
-                <div className="text-sm">{debugInfo}</div>
               </div>
             </div>
           )}

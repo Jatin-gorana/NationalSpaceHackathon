@@ -1,35 +1,35 @@
-"""Real-time simulation engine with automatic updates"""
+"""Real-time simulation engine with continuous physics updates"""
 import asyncio
 import numpy as np
 from typing import List, Dict
 from datetime import datetime
+from scipy.spatial import KDTree
 from models.satellite import Satellite
 from models.debris import Debris
 from services.telemetry_service import telemetry_service
-from services.collision_detector import collision_detector
-from utils.orbital_math import rk4_step
 from utils.constants import COLLISION_THRESHOLD
 
 class SimulationEngine:
-    def __init__(self, update_interval: float = 1.0):
-        self.update_interval = update_interval  # seconds
+    def __init__(self, update_interval: float = 0.05):  # 50ms = 20 Hz
+        self.update_interval = update_interval
         self.running = False
         self.task = None
+        self.mu = 398600.4418  # Earth's gravitational parameter km^3/s^2
         self.collision_risks = set()
+        self.threat_count = 0
         
     def generate_initial_constellation(self):
         """Generate 50 satellites and 500 debris objects"""
-        print("Generating initial constellation...")
+        print("🛰️  Generating initial constellation...")
         
-        # Generate 50 satellites in various orbits
+        # Generate 50 satellites in various LEO orbits
         for i in range(50):
-            # LEO orbits: 400-2000 km altitude
-            altitude = 400 + (i * 32)  # Spread across LEO
-            radius = 6371 + altitude  # Earth radius + altitude
+            altitude = 400 + (i * 32)  # 400-2000 km
+            radius = 6371 + altitude
             
             # Distribute around orbit
             angle = (i * 2 * np.pi / 50)
-            inclination = np.random.uniform(0, np.pi/6)  # 0-30 degrees
+            inclination = np.random.uniform(0, np.pi/6)
             
             # Position in ECI coordinates
             x = radius * np.cos(angle) * np.cos(inclination)
@@ -37,10 +37,10 @@ class SimulationEngine:
             z = radius * np.sin(inclination)
             
             # Circular orbit velocity
-            v_mag = np.sqrt(398600.4418 / radius)
-            vx = -v_mag * np.sin(angle)
-            vy = v_mag * np.cos(angle)
-            vz = 0
+            v_mag = np.sqrt(self.mu / radius)
+            vx = -v_mag * np.sin(angle) * np.cos(inclination)
+            vy = v_mag * np.cos(angle) * np.cos(inclination)
+            vz = v_mag * np.sin(inclination) * 0.1
             
             satellite = Satellite(
                 object_id=f"SAT-{i+1:03d}",
@@ -55,7 +55,6 @@ class SimulationEngine:
         
         # Generate 500 debris objects
         for i in range(500):
-            # Random orbits: 300-2500 km altitude
             altitude = np.random.uniform(300, 2500)
             radius = 6371 + altitude
             
@@ -67,8 +66,8 @@ class SimulationEngine:
             y = radius * np.sin(theta) * np.cos(phi)
             z = radius * np.sin(phi)
             
-            # Orbital velocity with some randomness
-            v_mag = np.sqrt(398600.4418 / radius) * np.random.uniform(0.95, 1.05)
+            # Orbital velocity with randomness
+            v_mag = np.sqrt(self.mu / radius) * np.random.uniform(0.95, 1.05)
             vx = -v_mag * np.sin(theta) + np.random.uniform(-0.1, 0.1)
             vy = v_mag * np.cos(theta) + np.random.uniform(-0.1, 0.1)
             vz = np.random.uniform(-0.2, 0.2)
@@ -82,75 +81,124 @@ class SimulationEngine:
             )
             telemetry_service.update_debris(debris)
         
-        print(f"Generated {len(telemetry_service.get_all_satellites())} satellites")
-        print(f"Generated {len(telemetry_service.get_all_debris())} debris objects")
+        print(f"✅ Generated {len(telemetry_service.get_all_satellites())} satellites")
+        print(f"✅ Generated {len(telemetry_service.get_all_debris())} debris objects")
+    
+    def rk4_step(self, position: np.ndarray, velocity: np.ndarray, dt: float) -> tuple:
+        """RK4 integration step for orbital dynamics"""
+        def acceleration(pos):
+            r = np.linalg.norm(pos)
+            if r < 1:
+                return np.zeros(3)
+            return -self.mu * pos / (r ** 3)
+        
+        # RK4 for velocity and position
+        k1_v = acceleration(position)
+        k1_p = velocity
+        
+        k2_v = acceleration(position + 0.5 * dt * k1_p)
+        k2_p = velocity + 0.5 * dt * k1_v
+        
+        k3_v = acceleration(position + 0.5 * dt * k2_p)
+        k3_p = velocity + 0.5 * dt * k2_v
+        
+        k4_v = acceleration(position + dt * k3_p)
+        k4_p = velocity + dt * k3_v
+        
+        new_velocity = velocity + (dt / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
+        new_position = position + (dt / 6.0) * (k1_p + 2*k2_p + 2*k3_p + k4_p)
+        
+        return new_position, new_velocity
+    
+    def propagate_orbits(self):
+        """Update all object positions using RK4"""
+        # Update satellites
+        satellites = telemetry_service.get_all_satellites()
+        for satellite in satellites:
+            pos = np.array(satellite.position)
+            vel = np.array(satellite.velocity)
+            
+            new_pos, new_vel = self.rk4_step(pos, vel, self.update_interval)
+            
+            satellite.position = new_pos.tolist()
+            satellite.velocity = new_vel.tolist()
+            satellite.timestamp = datetime.utcnow()
+            
+            telemetry_service.update_satellite(satellite)
+        
+        # Update debris
+        debris_objects = telemetry_service.get_all_debris()
+        for debris in debris_objects:
+            pos = np.array(debris.position)
+            vel = np.array(debris.velocity)
+            
+            new_pos, new_vel = self.rk4_step(pos, vel, self.update_interval)
+            
+            debris.position = new_pos.tolist()
+            debris.velocity = new_vel.tolist()
+            debris.timestamp = datetime.utcnow()
+            
+            telemetry_service.update_debris(debris)
+    
+    def detect_collisions(self):
+        """Fast collision detection using KDTree"""
+        satellites = telemetry_service.get_all_satellites()
+        debris_objects = telemetry_service.get_all_debris()
+        
+        if not satellites or not debris_objects:
+            return
+        
+        # Build KDTree for debris positions
+        debris_positions = np.array([d.position for d in debris_objects])
+        tree = KDTree(debris_positions)
+        
+        self.collision_risks.clear()
+        self.threat_count = 0
+        
+        # Check each satellite
+        for satellite in satellites:
+            sat_pos = np.array(satellite.position)
+            
+            # Find debris within 10 km
+            indices = tree.query_ball_point(sat_pos, 10.0)
+            
+            min_distance = float('inf')
+            for idx in indices:
+                deb_pos = debris_positions[idx]
+                distance = np.linalg.norm(sat_pos - deb_pos)
+                min_distance = min(min_distance, distance)
+            
+            # Update satellite status
+            if min_distance < COLLISION_THRESHOLD:  # 100 meters
+                satellite.status = "critical"
+                self.collision_risks.add(satellite.object_id)
+                self.threat_count += 1
+            elif min_distance < 1.0:  # 1 km warning
+                satellite.status = "warning"
+                self.collision_risks.add(satellite.object_id)
+            else:
+                satellite.status = "operational"
+            
+            telemetry_service.update_satellite(satellite)
     
     async def simulation_loop(self):
-        """Main simulation loop - updates every second"""
-        print("Starting simulation loop...")
+        """Main simulation loop - updates every 50ms"""
+        print("🚀 Starting simulation loop (20 Hz)...")
         
         while self.running:
             try:
-                # Update all satellites
-                satellites = telemetry_service.get_all_satellites()
-                for satellite in satellites:
-                    # Propagate using RK4
-                    state = np.array(satellite.position + satellite.velocity)
-                    new_state = rk4_step(state, self.update_interval)
-                    
-                    satellite.position = new_state[:3].tolist()
-                    satellite.velocity = new_state[3:].tolist()
-                    satellite.timestamp = datetime.utcnow()
-                    
-                    telemetry_service.update_satellite(satellite)
+                # Physics update
+                self.propagate_orbits()
                 
-                # Update all debris
-                debris_objects = telemetry_service.get_all_debris()
-                for debris in debris_objects:
-                    # Propagate using RK4
-                    state = np.array(debris.position + debris.velocity)
-                    new_state = rk4_step(state, self.update_interval)
-                    
-                    debris.position = new_state[:3].tolist()
-                    debris.velocity = new_state[3:].tolist()
-                    debris.timestamp = datetime.utcnow()
-                    
-                    telemetry_service.update_debris(debris)
-                
-                # Check for collisions
-                self.check_collisions_fast()
+                # Collision detection
+                self.detect_collisions()
                 
                 # Wait for next update
                 await asyncio.sleep(self.update_interval)
                 
             except Exception as e:
-                print(f"Simulation error: {e}")
+                print(f"❌ Simulation error: {e}")
                 await asyncio.sleep(self.update_interval)
-    
-    def check_collisions_fast(self):
-        """Fast collision check for real-time updates"""
-        satellites = telemetry_service.get_all_satellites()
-        debris_objects = telemetry_service.get_all_debris()
-        
-        self.collision_risks.clear()
-        
-        # Simple distance check (no full propagation for speed)
-        for satellite in satellites:
-            sat_pos = np.array(satellite.position)
-            
-            for debris in debris_objects:
-                deb_pos = np.array(debris.position)
-                distance = np.linalg.norm(sat_pos - deb_pos)
-                
-                if distance < COLLISION_THRESHOLD * 10:  # 1 km warning threshold
-                    self.collision_risks.add(satellite.object_id)
-                    satellite.status = "critical" if distance < COLLISION_THRESHOLD else "warning"
-                    telemetry_service.update_satellite(satellite)
-                    break
-            else:
-                if satellite.status != "operational":
-                    satellite.status = "operational"
-                    telemetry_service.update_satellite(satellite)
     
     async def start(self):
         """Start the simulation engine"""
@@ -158,7 +206,7 @@ class SimulationEngine:
             self.running = True
             self.generate_initial_constellation()
             self.task = asyncio.create_task(self.simulation_loop())
-            print("Simulation engine started")
+            print("✅ Simulation engine started")
     
     async def stop(self):
         """Stop the simulation engine"""
@@ -170,7 +218,7 @@ class SimulationEngine:
                     await self.task
                 except asyncio.CancelledError:
                     pass
-            print("Simulation engine stopped")
+            print("🛑 Simulation engine stopped")
     
     def get_state(self) -> Dict:
         """Get current simulation state"""
@@ -198,7 +246,7 @@ class SimulationEngine:
                 }
                 for deb in debris
             ],
-            "collision_risks": list(self.collision_risks),
+            "threats": self.threat_count,
             "timestamp": datetime.utcnow().isoformat()
         }
 

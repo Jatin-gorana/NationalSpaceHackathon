@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #000;
+            color: #0f0;
+            padding: 20px;
+        }
+        #log {
+            white-space: pre-wrap;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .error { color: #f00; }
+        .success { color: #0f0; }
+        .info { color: #0ff; }
+    </style>
+</head>
+<body>
+    <h1>ACM WebSocket Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="log"></div>
+
+    <script>
+        const log = document.getElementById('log');
+        const status = document.getElementById('status');
+        
+        function addLog(message, className = '') {
+            const div = document.createElement('div');
+            div.className = className;
+            div.textContent = new Date().toISOString() + ' - ' + message;
+            log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        const ws = new WebSocket('ws://localhost:8000/ws/simulation');
+        
+        ws.onopen = () => {
+            status.textContent = 'Connected ✅';
+            status.className = 'success';
+            addLog('WebSocket connected', 'success');
+        };
+        
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                addLog(`Received: ${data.satellites?.length || 0} satellites, ${data.debris?.length || 0} debris`, 'info');
+                
+                if (data.satellites && data.satellites.length > 0) {
+                    const sat = data.satellites[0];
+                    addLog(`Sample satellite: ${sat.object_id} at [${sat.position.map(p => p.toFixed(1)).join(', ')}] km`, 'info');
+                }
+            } catch (e) {
+                addLog('Parse error: ' + e.message, 'error');
+            }
+        };
+        
+        ws.onerror = (error) => {
+            status.textContent = 'Error ❌';
+            status.className = 'error';
+            addLog('WebSocket error: ' + error, 'error');
+        };
+        
+        ws.onclose = () => {
+            status.textContent = 'Disconnected 🔌';
+            addLog('WebSocket closed', 'error');
+        };
+    </script>
+</body>
+</html>

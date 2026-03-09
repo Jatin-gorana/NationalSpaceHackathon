@@ -1,7 +1,10 @@
 import React, { useRef, useMemo, useState, useEffect } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls, Stars, Line } from '@react-three/drei'
+import { OrbitControls, Stars } from '@react-three/drei'
 import * as THREE from 'three'
+
+// Scale factor: 1 km = 1/500 Three.js units
+const VISUAL_SCALE = 1 / 500
 
 function Earth() {
   const earthRef = useRef()
@@ -12,9 +15,12 @@ function Earth() {
     }
   })
 
+  // Earth radius: 6371 km scaled
+  const earthRadius = 6371 * VISUAL_SCALE
+
   return (
     <mesh ref={earthRef}>
-      <sphereGeometry args={[6.371, 64, 64]} />
+      <sphereGeometry args={[earthRadius, 64, 64]} />
       <meshStandardMaterial 
         color="#1e40af"
         emissive="#0a1f5f"
@@ -24,9 +30,8 @@ function Earth() {
   )
 }
 
-function Satellite({ position, id, hasCollision, velocity }) {
+function Satellite({ position, id, hasCollision }) {
   const meshRef = useRef()
-  const [hovered, setHovered] = useState(false)
   
   useFrame(() => {
     if (meshRef.current && hasCollision) {
@@ -35,45 +40,45 @@ function Satellite({ position, id, hasCollision, velocity }) {
     }
   })
 
-  if (!position || position.length !== 3) return null
+  if (!position || position.length !== 3) {
+    console.warn(`Invalid position for ${id}:`, position)
+    return null
+  }
 
-  const pos = new THREE.Vector3(position[0], position[2], position[1])
+  // Scale position from km to Three.js units
+  const scaledPos = [
+    position[0] * VISUAL_SCALE,
+    position[1] * VISUAL_SCALE,
+    position[2] * VISUAL_SCALE
+  ]
+  
+  // Debug: log first satellite position
+  if (id === 'SAT-001') {
+    console.log('SAT-001 position (km):', position)
+    console.log('SAT-001 scaled:', scaledPos)
+    console.log('SAT-001 distance from origin:', Math.sqrt(scaledPos[0]**2 + scaledPos[1]**2 + scaledPos[2]**2))
+  }
 
   return (
-    <group position={pos}>
-      <mesh 
-        ref={meshRef}
-        onPointerOver={() => setHovered(true)}
-        onPointerOut={() => setHovered(false)}
-      >
+    <group position={scaledPos}>
+      <mesh ref={meshRef}>
         <boxGeometry args={[0.3, 0.3, 0.3]} />
         <meshStandardMaterial 
           color={hasCollision ? "#ff0000" : "#00ff00"}
           emissive={hasCollision ? "#ff0000" : "#00ff00"}
-          emissiveIntensity={hasCollision ? 1.0 : 0.5}
+          emissiveIntensity={hasCollision ? 1.0 : 0.8}
         />
       </mesh>
       
       {/* Solar panels */}
-      <mesh position={[0.5, 0, 0]}>
-        <boxGeometry args={[0.8, 0.05, 0.4]} />
-        <meshStandardMaterial color="#1e90ff" metalness={0.8} />
+      <mesh position={[0.3, 0, 0]}>
+        <boxGeometry args={[0.4, 0.02, 0.2]} />
+        <meshStandardMaterial color="#1e90ff" metalness={0.8} emissive="#1e90ff" emissiveIntensity={0.3} />
       </mesh>
-      <mesh position={[-0.5, 0, 0]}>
-        <boxGeometry args={[0.8, 0.05, 0.4]} />
-        <meshStandardMaterial color="#1e90ff" metalness={0.8} />
+      <mesh position={[-0.3, 0, 0]}>
+        <boxGeometry args={[0.4, 0.02, 0.2]} />
+        <meshStandardMaterial color="#1e90ff" metalness={0.8} emissive="#1e90ff" emissiveIntensity={0.3} />
       </mesh>
-      
-      {/* Label on hover */}
-      {hovered && (
-        <sprite scale={[3, 1.5, 1]} position={[0, 1.5, 0]}>
-          <spriteMaterial 
-            color="#00ffff"
-            transparent
-            opacity={0.9}
-          />
-        </sprite>
-      )}
     </group>
   )
 }
@@ -81,21 +86,26 @@ function Satellite({ position, id, hasCollision, velocity }) {
 function Debris({ position, size }) {
   if (!position || position.length !== 3) return null
   
-  const pos = new THREE.Vector3(position[0], position[2], position[1])
+  // Scale position from km to Three.js units
+  const scaledPos = [
+    position[0] * VISUAL_SCALE,
+    position[1] * VISUAL_SCALE,
+    position[2] * VISUAL_SCALE
+  ]
 
   return (
-    <mesh position={pos}>
-      <sphereGeometry args={[Math.max(0.05, size * 0.05), 8, 8]} />
+    <mesh position={scaledPos}>
+      <sphereGeometry args={[0.08, 8, 8]} />
       <meshStandardMaterial 
         color="#ff6600"
         emissive="#ff3300"
-        emissiveIntensity={0.3}
+        emissiveIntensity={0.5}
       />
     </mesh>
   )
 }
 
-function OrbitLine({ position, velocity, color = "#00ffff", segments = 100 }) {
+function OrbitLine({ position, velocity, color = "#00ffff" }) {
   const points = useMemo(() => {
     if (!position || !velocity || position.length !== 3 || velocity.length !== 3) {
       return []
@@ -105,6 +115,7 @@ function OrbitLine({ position, velocity, color = "#00ffff", segments = 100 }) {
     const dt = 60
     const duration = 3600 // 1 hour
     const steps = Math.floor(duration / dt)
+    const segments = 80
     
     let state = [...position, ...velocity]
     const orbitPoints = []
@@ -120,7 +131,12 @@ function OrbitLine({ position, velocity, color = "#00ffff", segments = 100 }) {
     
     for (let i = 0; i < Math.min(steps, segments); i++) {
       const pos = state.slice(0, 3)
-      orbitPoints.push(new THREE.Vector3(pos[0], pos[2], pos[1]))
+      // Scale orbit points
+      orbitPoints.push([
+        pos[0] * VISUAL_SCALE,
+        pos[1] * VISUAL_SCALE,
+        pos[2] * VISUAL_SCALE
+      ])
       
       const k1 = derivatives(state)
       const k2 = derivatives(state.map((s, i) => s + 0.5 * dt * k1[i]))
@@ -131,44 +147,60 @@ function OrbitLine({ position, velocity, color = "#00ffff", segments = 100 }) {
     }
     
     return orbitPoints
-  }, [position, velocity, segments])
+  }, [position, velocity])
 
-  if (points.length === 0) return null
+  if (points.length < 2) return null
 
   return (
-    <Line
-      points={points}
-      color={color}
-      lineWidth={2}
-      transparent
-      opacity={0.6}
-    />
+    <line>
+      <bufferGeometry attach="geometry">
+        <bufferAttribute
+          attach="attributes-position"
+          count={points.length}
+          array={new Float32Array(points.flat())}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial attach="material" color={color} transparent opacity={0.4} linewidth={1} />
+    </line>
   )
 }
 
 function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
-  const [stats, setStats] = useState({ satellites: 0, debris: 0, orbits: 0 })
+  const [stats, setStats] = useState({ satellites: 0, debris: 0 })
 
   useEffect(() => {
     setStats({
       satellites: satellites.length,
-      debris: debris.length,
-      orbits: satellites.length + Math.min(debris.length, 50)
+      debris: debris.length
     })
+    
+    // Debug: log data arrival
+    if (satellites.length > 0) {
+      console.log('📊 Received satellites:', satellites.length)
+      console.log('📊 First satellite:', satellites[0])
+    }
   }, [satellites, debris])
 
   const satellitesAtRisk = useMemo(() => {
     return new Set(collisions.map(c => c.satellite_id))
   }, [collisions])
 
-  // Limit debris rendering for performance
+  // Limit debris rendering for performance (show closest 100)
   const visibleDebris = useMemo(() => {
-    return debris.slice(0, 100) // Show first 100 debris
+    return debris.slice(0, 100)
   }, [debris])
 
   return (
     <div className="w-full h-full relative">
-      <Canvas camera={{ position: [30, 30, 30], fov: 60 }}>
+      <Canvas 
+        camera={{ 
+          position: [0, 0, 25], 
+          fov: 60,
+          near: 0.1,
+          far: 1000
+        }}
+      >
         <color attach="background" args={['#000000']} />
         
         {/* Lighting */}
@@ -189,13 +221,18 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
 
         {/* Earth */}
         <Earth />
+        
+        {/* Test satellite at fixed position */}
+        <mesh position={[14, 0, 0]}>
+          <boxGeometry args={[0.3, 0.3, 0.3]} />
+          <meshStandardMaterial color="#ffff00" emissive="#ffff00" emissiveIntensity={1.0} />
+        </mesh>
 
         {/* Satellites with orbit lines */}
         {satellites.map((sat) => (
           <React.Fragment key={sat.object_id}>
             <Satellite 
               position={sat.position}
-              velocity={sat.velocity}
               id={sat.object_id}
               hasCollision={satellitesAtRisk.has(sat.object_id)}
             />
@@ -203,19 +240,17 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
               position={sat.position}
               velocity={sat.velocity}
               color={satellitesAtRisk.has(sat.object_id) ? "#ff0000" : "#00ffff"}
-              segments={80}
             />
           </React.Fragment>
         ))}
 
         {/* Debris (limited for performance) */}
         {visibleDebris.map((deb) => (
-          <React.Fragment key={deb.object_id}>
-            <Debris 
-              position={deb.position}
-              size={deb.size_estimate || 1}
-            />
-          </React.Fragment>
+          <Debris 
+            key={deb.object_id}
+            position={deb.position}
+            size={deb.size_estimate || 1}
+          />
         ))}
 
         {/* Controls */}
@@ -223,7 +258,7 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
           enablePan={true}
           enableZoom={true}
           enableRotate={true}
-          minDistance={10}
+          minDistance={5}
           maxDistance={100}
         />
       </Canvas>
@@ -250,7 +285,7 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
           </div>
         </div>
         <div className="mt-3 pt-3 border-t border-cyan-500 text-xs text-gray-400">
-          Real-time RK4 propagation
+          Scale: 1:{500} • Real-time RK4
         </div>
       </div>
 
@@ -260,9 +295,17 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
         <div className="space-y-1 text-gray-300">
           <div>Satellites: {stats.satellites}</div>
           <div>Debris: {stats.debris}</div>
-          <div>Orbit Lines: {stats.orbits}</div>
-          <div>Rendering: {visibleDebris.length} debris</div>
+          <div>Visible: {visibleDebris.length} debris</div>
+          <div>Scale: 1:500</div>
         </div>
+      </div>
+
+      {/* Camera hint */}
+      <div className="absolute bottom-4 right-4 panel text-xs text-gray-400">
+        <div className="font-bold text-cyan-400 mb-1">CONTROLS</div>
+        <div>🖱️ Left: Rotate</div>
+        <div>🖱️ Right: Pan</div>
+        <div>🖱️ Scroll: Zoom</div>
       </div>
     </div>
   )

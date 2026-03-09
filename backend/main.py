@@ -18,40 +18,52 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        print(f"✅ WebSocket client connected. Total: {len(self.active_connections)}")
     
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        print(f"🔌 WebSocket client disconnected. Total: {len(self.active_connections)}")
     
     async def broadcast(self, message: dict):
+        dead_connections = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
             except:
-                pass
+                dead_connections.append(connection)
+        
+        # Clean up dead connections
+        for conn in dead_connections:
+            self.disconnect(conn)
 
 manager = ConnectionManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Start simulation engine
+    print("🚀 Starting ACM System...")
     await simulation_engine.start()
     
-    # Start broadcast task
+    # Start broadcast task (20 Hz = 50ms)
     async def broadcast_loop():
         while True:
             try:
-                state = simulation_engine.get_state()
-                await manager.broadcast(state)
-                await asyncio.sleep(1)  # Broadcast every second
+                if len(manager.active_connections) > 0:
+                    state = simulation_engine.get_state()
+                    await manager.broadcast(state)
+                await asyncio.sleep(0.05)  # 50ms = 20 Hz
             except Exception as e:
-                print(f"Broadcast error: {e}")
-                await asyncio.sleep(1)
+                print(f"❌ Broadcast error: {e}")
+                await asyncio.sleep(0.05)
     
     broadcast_task = asyncio.create_task(broadcast_loop())
+    print("📡 WebSocket broadcast started (20 Hz)")
     
     yield
     
     # Shutdown: Stop simulation engine
+    print("🛑 Shutting down ACM System...")
     broadcast_task.cancel()
     await simulation_engine.stop()
 
@@ -78,36 +90,46 @@ app.include_router(ai_optimization_router, prefix="/api", tags=["ai-optimization
 
 @app.get("/")
 async def root():
+    state = simulation_engine.get_state()
     return {
         "status": "ACM System Online", 
         "version": "2.1.0",
         "features": ["AI Optimization", "Real-time Visualization", "Genetic Algorithms", "WebSocket Updates"],
         "simulation": {
             "running": simulation_engine.running,
-            "satellites": len(simulation_engine.get_state()["satellites"]),
-            "debris": len(simulation_engine.get_state()["debris"])
+            "update_rate": "20 Hz (50ms)",
+            "satellites": len(state["satellites"]),
+            "debris": len(state["debris"]),
+            "threats": state["threats"]
         }
     }
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "simulation_running": simulation_engine.running}
+    return {
+        "status": "healthy", 
+        "simulation_running": simulation_engine.running,
+        "update_interval": simulation_engine.update_interval
+    }
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+@app.websocket("/ws/simulation")
+async def websocket_simulation(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        # Send initial state
+        # Send initial state immediately
         await websocket.send_json(simulation_engine.get_state())
         
-        # Keep connection alive
+        # Keep connection alive and handle pings
         while True:
-            # Wait for ping from client
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                # No message received, continue
+                pass
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        print(f"❌ WebSocket error: {e}")
         manager.disconnect(websocket)
