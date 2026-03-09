@@ -1,29 +1,94 @@
-"""Maneuver planning for collision avoidance"""
-from typing import List, Dict, Optional
+"""Advanced maneuver planning with optimization"""
+from typing import List, Dict, Optional, Tuple
 import numpy as np
+from datetime import datetime, timedelta
 from utils.orbital_math import distance
 from utils.constants import SLOT_TOLERANCE
+from utils.fuel_model import fuel_model
 
 class ManeuverPlanner:
-    def __init__(self):
+    def __init__(self, thruster_cooldown: float = 3600.0):
+        """
+        Initialize maneuver planner
+        
+        Args:
+            thruster_cooldown: Minimum time between burns in seconds
+        """
         self.min_delta_v = 0.001  # Minimum delta-v in km/s
+        self.max_delta_v = 0.1  # Maximum delta-v per burn in km/s
+        self.thruster_cooldown = thruster_cooldown
+        self.scheduled_maneuvers: Dict[str, List[Dict]] = {}
     
-    def plan_avoidance_maneuver(self, satellite_id: str, 
-                               collision_info: Dict) -> Optional[Dict]:
+    def optimize_avoidance_maneuver(self, satellite_id: str, 
+                                   satellite_pos: List[float],
+                                   satellite_vel: List[float],
+                                   collision_info: Dict,
+                                   fuel_remaining: float = 100.0) -> Optional[Dict]:
         """
-        Plan collision avoidance maneuver
-        Returns maneuver plan with delta-v
+        Optimize collision avoidance maneuver with fuel minimization
+        
+        Strategy:
+        1. Compute optimal delta-v direction (perpendicular to velocity)
+        2. Minimize delta-v magnitude while ensuring safe separation
+        3. Check fuel budget and orbital slot constraints
         """
-        # Simple radial boost strategy
-        delta_v_magnitude = 0.01  # 10 m/s radial boost
+        tca_hours = collision_info.get("tca_hours", 1.0)
+        min_distance = collision_info.get("min_distance_km", 0.1)
+        
+        # Compute optimal maneuver direction (perpendicular to velocity)
+        vel = np.array(satellite_vel)
+        pos = np.array(satellite_pos)
+        
+        # Radial direction
+        radial = pos / np.linalg.norm(pos)
+        
+        # Cross-track direction (perpendicular to velocity and radial)
+        cross_track = np.cross(vel, radial)
+        cross_track = cross_track / np.linalg.norm(cross_track)
+        
+        # Optimize delta-v magnitude (minimum to achieve 1 km separation)
+        target_separation = 1.0  # km
+        required_delta_v = max(0.005, (target_separation - min_distance) * 0.01)
+        required_delta_v = min(required_delta_v, self.max_delta_v)
+        
+        # Check fuel budget
+        fuel_cost = fuel_model.compute_fuel_percentage(required_delta_v)
+        if fuel_cost > fuel_remaining:
+            return None
+        
+        # Compute execution time (execute at TCA - 30 minutes)
+        execution_time = max(0.5, tca_hours - 0.5)
+        
+        delta_v_vector = (cross_track * required_delta_v).tolist()
         
         maneuver = {
             "satellite_id": satellite_id,
             "maneuver_type": "collision_avoidance",
-            "delta_v": [0, 0, delta_v_magnitude],  # Radial boost
+            "delta_v": delta_v_vector,
+            "delta_v_magnitude": required_delta_v,
+            "fuel_cost_percent": round(fuel_cost, 3),
+            "execution_time_hours": round(execution_time, 2),
+            "execution_time_seconds": round(execution_time * 3600, 0),
+            "target_separation_km": target_separation,
+            "collision_object": collision_info.get("debris_id", "unknown"),
+            "reason": f"Avoid collision with {collision_info.get('debris_id', 'unknown')}",
+            "optimized": True
+        }
+        
+        return maneuver
+    
+    def plan_avoidance_maneuver(self, satellite_id: str, 
+                               collision_info: Dict) -> Optional[Dict]:
+        """Legacy method for backward compatibility"""
+        delta_v_magnitude = 0.01
+        
+        maneuver = {
+            "satellite_id": satellite_id,
+            "maneuver_type": "collision_avoidance",
+            "delta_v": [0, 0, delta_v_magnitude],
             "delta_v_magnitude": delta_v_magnitude,
-            "fuel_cost_percent": self._estimate_fuel_cost(delta_v_magnitude),
-            "execution_time": collision_info.get("time_to_collision_hours", 0) - 0.5,
+            "fuel_cost_percent": fuel_model.compute_fuel_percentage(delta_v_magnitude),
+            "execution_time": collision_info.get("tca_hours", 1.0) - 0.5,
             "reason": f"Avoid collision with {collision_info.get('debris_id', 'unknown')}"
         }
         
@@ -38,10 +103,9 @@ class ManeuverPlanner:
         deviation = distance(current_pos, assigned_slot)
         
         if deviation > SLOT_TOLERANCE:
-            # Calculate required delta-v (simplified)
             direction = np.array(assigned_slot) - np.array(current_pos)
             direction = direction / np.linalg.norm(direction)
-            delta_v_magnitude = min(0.005, deviation * 0.001)  # Scale with deviation
+            delta_v_magnitude = min(0.005, deviation * 0.001)
             delta_v = (direction * delta_v_magnitude).tolist()
             
             return {
@@ -49,17 +113,47 @@ class ManeuverPlanner:
                 "maneuver_type": "station_keeping",
                 "delta_v": delta_v,
                 "delta_v_magnitude": delta_v_magnitude,
-                "fuel_cost_percent": self._estimate_fuel_cost(delta_v_magnitude),
+                "fuel_cost_percent": fuel_model.compute_fuel_percentage(delta_v_magnitude),
                 "deviation_km": round(deviation, 2),
                 "reason": "Maintain assigned orbital slot"
             }
         
         return None
     
-    def _estimate_fuel_cost(self, delta_v: float) -> float:
-        """Estimate fuel cost as percentage (simplified)"""
-        # Rough estimate: 1 m/s costs ~0.1% fuel
-        return round(delta_v * 10, 2)
+    def schedule_maneuver(self, satellite_id: str, maneuver: Dict) -> Dict:
+        """
+        Schedule a maneuver with cooldown validation
+        """
+        if satellite_id not in self.scheduled_maneuvers:
+            self.scheduled_maneuvers[satellite_id] = []
+        
+        # Check cooldown constraint
+        if self.scheduled_maneuvers[satellite_id]:
+            last_maneuver = self.scheduled_maneuvers[satellite_id][-1]
+            time_since_last = maneuver.get("execution_time_seconds", 0) - \
+                            last_maneuver.get("execution_time_seconds", 0)
+            
+            if time_since_last < self.thruster_cooldown:
+                return {
+                    "status": "rejected",
+                    "reason": f"Thruster cooldown required: {self.thruster_cooldown}s",
+                    "time_until_ready": self.thruster_cooldown - time_since_last
+                }
+        
+        # Add to schedule
+        maneuver["scheduled_at"] = datetime.utcnow().isoformat()
+        maneuver["status"] = "scheduled"
+        self.scheduled_maneuvers[satellite_id].append(maneuver)
+        
+        return {
+            "status": "scheduled",
+            "maneuver": maneuver,
+            "total_scheduled": len(self.scheduled_maneuvers[satellite_id])
+        }
+    
+    def get_scheduled_maneuvers(self, satellite_id: str) -> List[Dict]:
+        """Get all scheduled maneuvers for a satellite"""
+        return self.scheduled_maneuvers.get(satellite_id, [])
 
 # Global instance
 maneuver_planner = ManeuverPlanner()

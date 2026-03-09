@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  acm-backend:
+  backend:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -12,3 +12,22 @@ services:
     volumes:
       - ../backend:/app
     restart: unless-stopped
+    networks:
+      - acm-network
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - acm-network
+
+networks:
+  acm-network:
+    driver: bridge
+
