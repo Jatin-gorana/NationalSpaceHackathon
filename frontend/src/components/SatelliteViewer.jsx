@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useState } from 'react'
+import React, { useRef, useMemo, useState, useEffect } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Stars, Line } from '@react-three/drei'
 import * as THREE from 'three'
@@ -35,6 +35,8 @@ function Satellite({ position, id, hasCollision, velocity }) {
     }
   })
 
+  if (!position || position.length !== 3) return null
+
   const pos = new THREE.Vector3(position[0], position[2], position[1])
 
   return (
@@ -62,7 +64,7 @@ function Satellite({ position, id, hasCollision, velocity }) {
         <meshStandardMaterial color="#1e90ff" metalness={0.8} />
       </mesh>
       
-      {/* Label */}
+      {/* Label on hover */}
       {hovered && (
         <sprite scale={[3, 1.5, 1]} position={[0, 1.5, 0]}>
           <spriteMaterial 
@@ -77,11 +79,13 @@ function Satellite({ position, id, hasCollision, velocity }) {
 }
 
 function Debris({ position, size }) {
+  if (!position || position.length !== 3) return null
+  
   const pos = new THREE.Vector3(position[0], position[2], position[1])
 
   return (
     <mesh position={pos}>
-      <sphereGeometry args={[size * 0.05, 8, 8]} />
+      <sphereGeometry args={[Math.max(0.05, size * 0.05), 8, 8]} />
       <meshStandardMaterial 
         color="#ff6600"
         emissive="#ff3300"
@@ -91,23 +95,33 @@ function Debris({ position, size }) {
   )
 }
 
-function RealTimeOrbitLine({ position, velocity, color = "#00ffff", segments = 200 }) {
+function OrbitLine({ position, velocity, color = "#00ffff", segments = 100 }) {
   const points = useMemo(() => {
-    // Real-time RK4 orbital propagation
+    if (!position || !velocity || position.length !== 3 || velocity.length !== 3) {
+      return []
+    }
+
     const MU = 398600.4418
-    const dt = 60 // 60 second timestep
-    const duration = 5400 // 1.5 hours ahead
+    const dt = 60
+    const duration = 3600 // 1 hour
     const steps = Math.floor(duration / dt)
     
     let state = [...position, ...velocity]
     const orbitPoints = []
     
-    // RK4 integration
+    function derivatives(s) {
+      const pos = s.slice(0, 3)
+      const vel = s.slice(3, 6)
+      const r = Math.sqrt(pos[0]**2 + pos[1]**2 + pos[2]**2)
+      if (r < 1) return [...vel, 0, 0, 0]
+      const acc = pos.map(p => -MU * p / (r ** 3))
+      return [...vel, ...acc]
+    }
+    
     for (let i = 0; i < Math.min(steps, segments); i++) {
       const pos = state.slice(0, 3)
       orbitPoints.push(new THREE.Vector3(pos[0], pos[2], pos[1]))
       
-      // RK4 step
       const k1 = derivatives(state)
       const k2 = derivatives(state.map((s, i) => s + 0.5 * dt * k1[i]))
       const k3 = derivatives(state.map((s, i) => s + 0.5 * dt * k2[i]))
@@ -116,16 +130,10 @@ function RealTimeOrbitLine({ position, velocity, color = "#00ffff", segments = 2
       state = state.map((s, i) => s + (dt / 6.0) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i]))
     }
     
-    function derivatives(s) {
-      const pos = s.slice(0, 3)
-      const vel = s.slice(3, 6)
-      const r = Math.sqrt(pos[0]**2 + pos[1]**2 + pos[2]**2)
-      const acc = pos.map(p => -MU * p / (r ** 3))
-      return [...vel, ...acc]
-    }
-    
     return orbitPoints
   }, [position, velocity, segments])
+
+  if (points.length === 0) return null
 
   return (
     <Line
@@ -138,53 +146,28 @@ function RealTimeOrbitLine({ position, velocity, color = "#00ffff", segments = 2
   )
 }
 
-function CollisionWarningLine({ sat1Pos, sat2Pos }) {
-  const points = useMemo(() => {
-    return [
-      new THREE.Vector3(sat1Pos[0], sat1Pos[2], sat1Pos[1]),
-      new THREE.Vector3(sat2Pos[0], sat2Pos[2], sat2Pos[1])
-    ]
-  }, [sat1Pos, sat2Pos])
+function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
+  const [stats, setStats] = useState({ satellites: 0, debris: 0, orbits: 0 })
+
+  useEffect(() => {
+    setStats({
+      satellites: satellites.length,
+      debris: debris.length,
+      orbits: satellites.length + Math.min(debris.length, 50)
+    })
+  }, [satellites, debris])
+
+  const satellitesAtRisk = useMemo(() => {
+    return new Set(collisions.map(c => c.satellite_id))
+  }, [collisions])
+
+  // Limit debris rendering for performance
+  const visibleDebris = useMemo(() => {
+    return debris.slice(0, 100) // Show first 100 debris
+  }, [debris])
 
   return (
-    <Line
-      points={points}
-      color="#ff0000"
-      lineWidth={3}
-      transparent
-      opacity={0.8}
-      dashed
-      dashScale={50}
-      dashSize={1}
-      gapSize={0.5}
-    />
-  )
-}
-
-function SatelliteViewer({ satellites, debris, collisions }) {
-  const satellitesAtRisk = new Set(
-    collisions.map(c => c.satellite_id)
-  )
-
-  // Create collision warning lines
-  const collisionLines = useMemo(() => {
-    return collisions.slice(0, 10).map(collision => {
-      const sat = satellites.find(s => s.object_id === collision.satellite_id)
-      const deb = debris.find(d => d.object_id === collision.debris_id)
-      
-      if (sat && deb) {
-        return {
-          id: `${collision.satellite_id}-${collision.debris_id}`,
-          sat1Pos: sat.position,
-          sat2Pos: deb.position
-        }
-      }
-      return null
-    }).filter(Boolean)
-  }, [collisions, satellites, debris])
-
-  return (
-    <div className="w-full h-full">
+    <div className="w-full h-full relative">
       <Canvas camera={{ position: [30, 30, 30], fov: 60 }}>
         <color attach="background" args={['#000000']} />
         
@@ -207,7 +190,7 @@ function SatelliteViewer({ satellites, debris, collisions }) {
         {/* Earth */}
         <Earth />
 
-        {/* Satellites with real-time orbit prediction */}
+        {/* Satellites with orbit lines */}
         {satellites.map((sat) => (
           <React.Fragment key={sat.object_id}>
             <Satellite 
@@ -216,37 +199,23 @@ function SatelliteViewer({ satellites, debris, collisions }) {
               id={sat.object_id}
               hasCollision={satellitesAtRisk.has(sat.object_id)}
             />
-            <RealTimeOrbitLine 
+            <OrbitLine 
               position={sat.position}
               velocity={sat.velocity}
               color={satellitesAtRisk.has(sat.object_id) ? "#ff0000" : "#00ffff"}
+              segments={80}
             />
           </React.Fragment>
         ))}
 
-        {/* Debris with orbit lines */}
-        {debris.map((deb) => (
+        {/* Debris (limited for performance) */}
+        {visibleDebris.map((deb) => (
           <React.Fragment key={deb.object_id}>
             <Debris 
               position={deb.position}
               size={deb.size_estimate || 1}
             />
-            <RealTimeOrbitLine 
-              position={deb.position}
-              velocity={deb.velocity}
-              color="#ff6600"
-              segments={100}
-            />
           </React.Fragment>
-        ))}
-
-        {/* Collision warning lines */}
-        {collisionLines.map((line) => (
-          <CollisionWarningLine
-            key={line.id}
-            sat1Pos={line.sat1Pos}
-            sat2Pos={line.sat2Pos}
-          />
         ))}
 
         {/* Controls */}
@@ -279,10 +248,6 @@ function SatelliteViewer({ satellites, debris, collisions }) {
             <div className="w-8 h-0.5 bg-cyan-500"></div>
             <span>Predicted Orbits</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-0.5 bg-red-500" style={{borderTop: '2px dashed'}}></div>
-            <span>Collision Paths</span>
-          </div>
         </div>
         <div className="mt-3 pt-3 border-t border-cyan-500 text-xs text-gray-400">
           Real-time RK4 propagation
@@ -293,10 +258,10 @@ function SatelliteViewer({ satellites, debris, collisions }) {
       <div className="absolute top-4 left-4 panel text-xs">
         <div className="font-bold text-cyan-400 mb-2">VISUALIZATION</div>
         <div className="space-y-1 text-gray-300">
-          <div>Satellites: {satellites.length}</div>
-          <div>Debris: {debris.length}</div>
-          <div>Orbit Lines: {satellites.length + debris.length}</div>
-          <div>Warning Lines: {collisionLines.length}</div>
+          <div>Satellites: {stats.satellites}</div>
+          <div>Debris: {stats.debris}</div>
+          <div>Orbit Lines: {stats.orbits}</div>
+          <div>Rendering: {visibleDebris.length} debris</div>
         </div>
       </div>
     </div>
