@@ -29,8 +29,14 @@ class ConnectionManager:
         dead_connections = []
         for connection in self.active_connections:
             try:
+                # Ensure message is JSON serializable
+                if not isinstance(message, dict):
+                    print(f"⚠️ Invalid message type: {type(message)}")
+                    continue
+                    
                 await connection.send_json(message)
-            except:
+            except Exception as e:
+                print(f"❌ Broadcast error to connection: {e}")
                 dead_connections.append(connection)
         
         # Clean up dead connections
@@ -109,7 +115,22 @@ async def health():
     return {
         "status": "healthy", 
         "simulation_running": simulation_engine.running,
-        "update_interval": simulation_engine.update_interval
+        "update_interval": simulation_engine.update_interval,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/api/quick-status")
+async def quick_status():
+    """Quick status endpoint that responds immediately"""
+    satellites = telemetry_service.get_all_satellites()
+    debris = telemetry_service.get_all_debris()
+    
+    return {
+        "status": "online",
+        "total_satellites": len(satellites),
+        "total_debris": len(debris),
+        "simulation_running": simulation_engine.running,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/debug/force-collisions")
@@ -162,7 +183,8 @@ async def websocket_simulation(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         # Send initial state immediately
-        await websocket.send_json(simulation_engine.get_state())
+        initial_state = simulation_engine.get_state()
+        await websocket.send_json(initial_state)
         
         # Keep connection alive and handle pings
         while True:
@@ -173,6 +195,9 @@ async def websocket_simulation(websocket: WebSocket):
             except asyncio.TimeoutError:
                 # No message received, continue
                 pass
+            except Exception as e:
+                print(f"❌ WebSocket receive error: {e}")
+                break
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:

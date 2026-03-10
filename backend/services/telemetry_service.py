@@ -34,13 +34,39 @@ class TelemetryService:
         return list(self.debris.values())
     
     def get_system_status(self) -> Dict:
-        """Get overall system status"""
+        """Get overall system status with full data"""
+        satellites = list(self.satellites.values())
+        debris = list(self.debris.values())
+        
         return {
-            "total_satellites": len(self.satellites),
-            "total_debris": len(self.debris),
-            "operational_satellites": sum(1 for s in self.satellites.values() if s.status == "operational"),
-            "critical_satellites": sum(1 for s in self.satellites.values() if s.status == "critical"),
-            "timestamp": datetime.utcnow().isoformat()
+            "total_satellites": len(satellites),
+            "total_debris": len(debris),
+            "operational_satellites": sum(1 for s in satellites if s.status == "operational"),
+            "critical_satellites": sum(1 for s in satellites if s.status == "critical"),
+            "timestamp": datetime.utcnow().isoformat(),
+            "satellites": [
+                {
+                    "object_id": sat.object_id,
+                    "position": sat.position,
+                    "velocity": sat.velocity,
+                    "fuel_remaining": sat.fuel_remaining,
+                    "status": sat.status,
+                    "scheduled_maneuvers": getattr(sat, 'scheduled_maneuvers', []),
+                    "in_recovery": getattr(sat, 'in_recovery', False)
+                }
+                for sat in satellites
+            ],
+            "debris": [
+                {
+                    "object_id": deb.object_id,
+                    "position": deb.position,
+                    "velocity": deb.velocity,
+                    "size_estimate": deb.size_estimate
+                }
+                for deb in debris
+            ],
+            "threats": 0,  # Will be updated by simulation engine
+            "collisions": []  # Will be updated by simulation engine
         }
 
 # Global instance

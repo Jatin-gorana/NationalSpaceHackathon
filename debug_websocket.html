@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Debug</title>
+    <style>
+        body { font-family: monospace; background: #000; color: #0ff; padding: 20px; }
+        .log { background: #111; padding: 10px; margin: 10px 0; border: 1px solid #333; }
+        .error { color: #f00; }
+        .success { color: #0f0; }
+        .warning { color: #ff0; }
+    </style>
+</head>
+<body>
+    <h1>ACM WebSocket Debug</h1>
+    <button onclick="connect()">Connect</button>
+    <button onclick="disconnect()">Disconnect</button>
+    <button onclick="clearLog()">Clear Log</button>
+    
+    <div id="status">Disconnected</div>
+    <div id="log"></div>
+
+    <script>
+        let ws = null;
+        let messageCount = 0;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log ${type}`;
+            entry.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(status, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = status;
+            statusDiv.className = type;
+        }
+
+        function connect() {
+            if (ws) {
+                ws.close();
+            }
+
+            const wsUrl = 'ws://localhost:8000/ws/simulation';
+            log(`Connecting to: ${wsUrl}`);
+            
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected', 'success');
+                updateStatus('Connected', 'success');
+            };
+
+            ws.onmessage = (event) => {
+                messageCount++;
+                try {
+                    // Check if it's JSON
+                    if (event.data.startsWith('{') || event.data.startsWith('[')) {
+                        const data = JSON.parse(event.data);
+                        log(`📨 Message ${messageCount}: JSON data received (${Object.keys(data).join(', ')})`, 'success');
+                        
+                        // Log key metrics
+                        if (data.satellites) {
+                            log(`   - Satellites: ${data.satellites.length}`, 'info');
+                        }
+                        if (data.debris) {
+                            log(`   - Debris: ${data.debris.length}`, 'info');
+                        }
+                        if (data.threats !== undefined) {
+                            log(`   - Threats: ${data.threats}`, data.threats > 0 ? 'warning' : 'info');
+                        }
+                    } else {
+                        log(`📨 Message ${messageCount}: ${event.data}`, 'info');
+                    }
+                } catch (error) {
+                    log(`❌ Parse error: ${error.message}`, 'error');
+                    log(`   Raw data: ${event.data.substring(0, 200)}...`, 'error');
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ WebSocket error: ${error}`, 'error');
+                updateStatus('Error', 'error');
+            };
+
+            ws.onclose = (event) => {
+                log(`🔌 WebSocket closed: Code ${event.code}, Reason: ${event.reason}`, 'warning');
+                updateStatus('Disconnected', 'warning');
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            messageCount = 0;
+        }
+
+        // Auto-connect on load
+        window.onload = () => {
+            setTimeout(connect, 1000);
+        };
+    </script>
+</body>
+</html>

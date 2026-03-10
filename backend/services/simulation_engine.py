@@ -27,10 +27,11 @@ class SimulationEngine:
         self.satellites_in_graveyard = set()
         
     def generate_initial_constellation(self):
-        """Generate 50 satellites and 500 debris objects with persistent collision scenarios"""
+        """Generate 50 satellites and 100 debris objects with persistent collision scenarios"""
         print("🛰️  Generating initial constellation...")
         
-        # Generate 50 satellites in various LEO orbits
+        # Generate 50 satellites in various LEO orbits (optimized)
+        satellites_data = []
         for i in range(50):
             altitude = 400 + (i * 32)  # 400-2000 km
             radius = 6371 + altitude
@@ -61,8 +62,11 @@ class SimulationEngine:
             )
             telemetry_service.update_satellite(satellite)
         
-        # Generate 500 debris objects
-        for i in range(500):
+        print(f"✅ Generated 50 satellites")
+        
+        # Generate only 100 debris objects for faster startup (reduced from 500)
+        debris_data = []
+        for i in range(100):
             altitude = np.random.uniform(300, 2500)
             radius = 6371 + altitude
             
@@ -88,6 +92,8 @@ class SimulationEngine:
                 size_estimate=np.random.uniform(0.1, 5.0)
             )
             telemetry_service.update_debris(debris)
+        
+        print(f"✅ Generated 100 debris objects (optimized for faster startup)")
         
         # Create PERSISTENT collision scenarios for 15 satellites
         satellites = telemetry_service.get_all_satellites()
@@ -519,9 +525,19 @@ class SimulationEngine:
         """Start the simulation engine"""
         if not self.running:
             self.running = True
-            self.generate_initial_constellation()
+            print("🚀 Starting simulation engine...")
+            
+            # Generate constellation asynchronously to not block startup
+            asyncio.create_task(self.generate_constellation_async())
+            
+            # Start simulation loop immediately
             self.task = asyncio.create_task(self.simulation_loop())
-            print("✅ Simulation engine started")
+            print("✅ Simulation engine started (constellation generating in background)")
+    
+    async def generate_constellation_async(self):
+        """Generate constellation asynchronously"""
+        await asyncio.sleep(0.1)  # Let other tasks start first
+        self.generate_initial_constellation()
     
     async def stop(self):
         """Stop the simulation engine"""
