@@ -7,7 +7,10 @@ from scipy.spatial import KDTree
 from models.satellite import Satellite
 from models.debris import Debris
 from services.telemetry_service import telemetry_service
-from utils.constants import COLLISION_THRESHOLD
+from utils.constants import (
+    COLLISION_THRESHOLD, LOW_FUEL_THRESHOLD, SLOT_TOLERANCE,
+    THRUSTER_COOLDOWN, MANEUVER_EXECUTION_TOLERANCE
+)
 
 class SimulationEngine:
     def __init__(self, update_interval: float = 0.05):  # 50ms = 20 Hz
@@ -19,6 +22,9 @@ class SimulationEngine:
         self.threat_count = 0
         self.predicted_collisions = []  # Store predicted collisions with full details
         self.last_prediction_time = 0  # Track when we last ran prediction
+        self.simulation_time = 0.0  # Simulation time in seconds
+        self.maneuvers_executed = 0
+        self.satellites_in_graveyard = set()
         
     def generate_initial_constellation(self):
         """Generate 50 satellites and 500 debris objects with persistent collision scenarios"""
@@ -86,20 +92,36 @@ class SimulationEngine:
         # Create PERSISTENT collision scenarios for 15 satellites
         satellites = telemetry_service.get_all_satellites()
         
-        print("⚠️  Creating persistent collision scenarios...")
+        print("⚠️  Creating IMMEDIATE collision scenarios...")
         
-        # Strategy 1: Debris on converging orbits (5 satellites)
-        for i in range(min(5, len(satellites))):
+        # Strategy 1: Debris VERY close to satellites (immediate threats)
+        for i in range(min(8, len(satellites))):
             sat = satellites[i]
             sat_pos = np.array(sat.position)
             sat_vel = np.array(sat.velocity)
             
-            # Place debris on converging orbit (opposite direction, same altitude)
-            collision_debris_pos = sat_pos + sat_vel * 2.0  # 2 seconds ahead
-            collision_debris_vel = -sat_vel * 0.98  # Opposite direction, slightly slower
+            # Place debris VERY close (within 5 km) on collision course
+            # Random direction around satellite
+            angle = np.random.uniform(0, 2 * np.pi)
+            distance = np.random.uniform(2.0, 8.0)  # 2-8 km away
+            
+            # Direction vector
+            direction = np.array([np.cos(angle), np.sin(angle), np.random.uniform(-0.3, 0.3)])
+            direction = direction / np.linalg.norm(direction)
+            
+            # Place debris close to satellite
+            collision_debris_pos = sat_pos + direction * distance
+            
+            # Velocity towards satellite (collision course)
+            to_satellite = sat_pos - collision_debris_pos
+            to_satellite = to_satellite / np.linalg.norm(to_satellite)
+            
+            # Speed similar to satellite but on collision course
+            collision_speed = np.linalg.norm(sat_vel) * 0.95
+            collision_debris_vel = to_satellite * collision_speed + sat_vel * 0.1
             
             collision_debris = Debris(
-                object_id=f"DEB-CONVERGE-{i+1:03d}",
+                object_id=f"DEB-IMMEDIATE-{i+1:03d}",
                 position=collision_debris_pos.tolist(),
                 velocity=collision_debris_vel.tolist(),
                 timestamp=datetime.utcnow(),
@@ -107,11 +129,48 @@ class SimulationEngine:
             )
             telemetry_service.update_debris(collision_debris)
         
-        # Strategy 2: Debris on crossing orbital planes (5 satellites)
-        for i in range(5, min(10, len(satellites))):
+        # Strategy 2: Debris on crossing orbital planes (4 satellites)
+        for i in range(8, min(12, len(satellites))):
             sat = satellites[i]
             sat_pos = np.array(sat.position)
             sat_vel = np.array(sat.velocity)
+            
+            # Create debris with perpendicular velocity (crossing orbit)
+            radial = sat_pos / np.linalg.norm(sat_pos)
+            perpendicular = np.cross(sat_vel, radial)
+            perpendicular = perpendicular / np.linalg.norm(perpendicular)
+            
+            # Place debris close but on crossing path
+            collision_debris_pos = sat_pos + perpendicular * 3.0  # 3 km offset
+            collision_debris_vel = sat_vel * 0.8 + perpendicular * 2.0  # Crossing velocity
+            
+            collision_debris = Debris(
+                object_id=f"DEB-CROSS-{i+1:03d}",
+                position=collision_debris_pos.tolist(),
+                velocity=collision_debris_vel.tolist(),
+                timestamp=datetime.utcnow(),
+                size_estimate=1.5
+            )
+            telemetry_service.update_debris(collision_debris)
+        
+        # Strategy 3: Debris chasing from behind (3 satellites)
+        for i in range(12, min(15, len(satellites))):
+            sat = satellites[i]
+            sat_pos = np.array(sat.position)
+            sat_vel = np.array(sat.velocity)
+            
+            # Place debris behind, moving faster (catching up)
+            collision_debris_pos = sat_pos - sat_vel * 1.5  # 1.5 seconds behind
+            collision_debris_vel = sat_vel * 1.15  # 15% faster (catching up quickly)
+            
+            collision_debris = Debris(
+                object_id=f"DEB-CHASE-{i+1:03d}",
+                position=collision_debris_pos.tolist(),
+                velocity=collision_debris_vel.tolist(),
+                timestamp=datetime.utcnow(),
+                size_estimate=2.5
+            )
+            telemetry_service.update_debris(collision_debris)
             
             # Create debris with perpendicular velocity (crossing orbit)
             radial = sat_pos / np.linalg.norm(sat_pos)
@@ -152,7 +211,8 @@ class SimulationEngine:
         
         print(f"✅ Generated {len(telemetry_service.get_all_satellites())} satellites")
         print(f"✅ Generated {len(telemetry_service.get_all_debris())} debris objects")
-        print(f"⚠️  Created 15 persistent collision scenarios (converging, crossing, chasing)")
+        print(f"⚠️  Created 15 IMMEDIATE collision scenarios (within 2-8 km)")
+        print("🔥 Collision threats should appear within 10-30 seconds!")
     
     def rk4_step(self, position: np.ndarray, velocity: np.ndarray, dt: float) -> tuple:
         """RK4 integration step for orbital dynamics"""
@@ -230,8 +290,8 @@ class SimulationEngine:
         for satellite in satellites:
             sat_pos = np.array(satellite.position)
             
-            # Find debris within 10 km
-            indices = tree.query_ball_point(sat_pos, 10.0)
+            # Find debris within 15 km (increased from 10 km)
+            indices = tree.query_ball_point(sat_pos, 15.0)
             
             min_distance = float('inf')
             closest_debris_id = None
@@ -254,7 +314,7 @@ class SimulationEngine:
                     "min_distance_meters": min_distance * 1000,
                     "severity": "critical"
                 }
-            elif min_distance < 1.0:  # 1 km warning
+            elif min_distance < 5.0:  # 5 km warning (increased from 1 km)
                 satellite.status = "warning"
                 self.collision_risks.add(satellite.object_id)
                 collision_details[satellite.object_id] = {
@@ -284,6 +344,135 @@ class SimulationEngine:
             print(f"❌ Conjunction prediction error: {e}")
             self.predicted_collisions = []
     
+    def execute_scheduled_maneuvers(self):
+        """Execute maneuvers that are due for execution"""
+        from services.maneuver_planner import maneuver_planner
+        
+        satellites = telemetry_service.get_all_satellites()
+        
+        for satellite in satellites:
+            # Skip satellites in graveyard orbit
+            if satellite.status == "graveyard" or satellite.status == "decommissioned":
+                continue
+            
+            # Get scheduled maneuvers
+            scheduled = getattr(satellite, 'scheduled_maneuvers', [])
+            
+            if not scheduled:
+                continue
+            
+            # Check for maneuvers ready to execute
+            for maneuver in scheduled[:]:  # Copy list to allow modification
+                exec_time = maneuver.get("execution_time_seconds", 0)
+                
+                # Check if maneuver is due (within tolerance)
+                if abs(self.simulation_time - exec_time) <= MANEUVER_EXECUTION_TOLERANCE:
+                    # Check thruster cooldown
+                    time_since_last = self.simulation_time - satellite.last_maneuver_time
+                    
+                    if time_since_last >= THRUSTER_COOLDOWN:
+                        # Execute maneuver
+                        success = self.apply_maneuver(
+                            satellite.object_id,
+                            maneuver["delta_v"]
+                        )
+                        
+                        if success:
+                            # Update last maneuver time
+                            satellite.last_maneuver_time = self.simulation_time
+                            
+                            # Remove from schedule
+                            scheduled.remove(maneuver)
+                            satellite.scheduled_maneuvers = scheduled
+                            
+                            # Update status
+                            if maneuver.get("maneuver_type") == "graveyard_orbit":
+                                satellite.status = "graveyard"
+                                self.satellites_in_graveyard.add(satellite.object_id)
+                            else:
+                                satellite.status = "maneuvering"
+                            
+                            telemetry_service.update_satellite(satellite)
+                            self.maneuvers_executed += 1
+                            
+                            print(f"✅ Executed {maneuver.get('maneuver_type', 'maneuver')} for {satellite.object_id}")
+                    else:
+                        print(f"⏳ Thruster cooldown: {THRUSTER_COOLDOWN - time_since_last:.0f}s remaining for {satellite.object_id}")
+    
+    def check_orbit_recovery_needed(self):
+        """Check if satellites need orbit recovery maneuvers"""
+        from services.maneuver_planner import maneuver_planner
+        from utils.orbital_math import distance
+        
+        satellites = telemetry_service.get_all_satellites()
+        
+        for satellite in satellites:
+            # Skip satellites in graveyard or already recovering
+            if satellite.status in ["graveyard", "decommissioned"]:
+                continue
+            
+            # Skip if already has scheduled maneuvers
+            if getattr(satellite, 'scheduled_maneuvers', []):
+                continue
+            
+            # Check deviation from assigned slot
+            deviation = distance(satellite.position, satellite.assigned_slot)
+            
+            # If deviation > tolerance and not in collision risk, schedule recovery
+            if deviation > SLOT_TOLERANCE and satellite.status != "critical":
+                recovery_maneuver = maneuver_planner.plan_orbit_recovery(
+                    satellite.object_id,
+                    satellite.position,
+                    satellite.velocity,
+                    satellite.assigned_slot,
+                    satellite.fuel_remaining,
+                    execution_delay=self.simulation_time + 120.0  # Execute in 2 minutes
+                )
+                
+                if recovery_maneuver:
+                    # Add to satellite's schedule
+                    if not hasattr(satellite, 'scheduled_maneuvers'):
+                        satellite.scheduled_maneuvers = []
+                    satellite.scheduled_maneuvers.append(recovery_maneuver)
+                    satellite.in_recovery = True
+                    telemetry_service.update_satellite(satellite)
+                    print(f"📍 Scheduled orbit recovery for {satellite.object_id} (deviation: {deviation:.2f} km)")
+    
+    def check_low_fuel_satellites(self):
+        """Check for low fuel satellites and move to graveyard orbit"""
+        from services.maneuver_planner import maneuver_planner
+        
+        satellites = telemetry_service.get_all_satellites()
+        
+        for satellite in satellites:
+            # Skip if already in graveyard
+            if satellite.object_id in self.satellites_in_graveyard:
+                continue
+            
+            # Check if fuel is critically low
+            if satellite.fuel_remaining <= LOW_FUEL_THRESHOLD:
+                print(f"⚠️ Low fuel detected for {satellite.object_id}: {satellite.fuel_remaining:.1f}%")
+                
+                # Plan graveyard orbit maneuver
+                graveyard_maneuver = maneuver_planner.plan_graveyard_orbit(
+                    satellite.object_id,
+                    satellite.position,
+                    satellite.velocity,
+                    satellite.fuel_remaining
+                )
+                
+                if graveyard_maneuver:
+                    # Add to satellite's schedule (high priority)
+                    if not hasattr(satellite, 'scheduled_maneuvers'):
+                        satellite.scheduled_maneuvers = []
+                    
+                    # Clear other maneuvers and add graveyard maneuver
+                    satellite.scheduled_maneuvers = [graveyard_maneuver]
+                    graveyard_maneuver["execution_time_seconds"] = self.simulation_time + 30.0
+                    
+                    telemetry_service.update_satellite(satellite)
+                    print(f"🪦 Scheduled graveyard orbit for {satellite.object_id}")
+    
     async def simulation_loop(self):
         """Main simulation loop - updates every 50ms"""
         print("🚀 Starting simulation loop (20 Hz)...")
@@ -292,15 +481,29 @@ class SimulationEngine:
         
         while self.running:
             try:
+                # Update simulation time
+                self.simulation_time += self.update_interval
+                
                 # Physics update (every iteration)
                 self.propagate_orbits()
                 
                 # Collision detection (every iteration)
                 self.detect_collisions()
                 
+                # Execute scheduled maneuvers (every iteration)
+                self.execute_scheduled_maneuvers()
+                
                 # Conjunction prediction (every 10 seconds = 200 iterations)
                 if iteration % 200 == 0:
                     await self.predict_conjunctions()
+                
+                # Check for orbit recovery needs (every 30 seconds = 600 iterations)
+                if iteration % 600 == 0:
+                    self.check_orbit_recovery_needed()
+                
+                # Check for low fuel satellites (every 60 seconds = 1200 iterations)
+                if iteration % 1200 == 0:
+                    self.check_low_fuel_satellites()
                 
                 # Wait for next update
                 await asyncio.sleep(self.update_interval)
@@ -365,7 +568,9 @@ class SimulationEngine:
                     "velocity": sat.velocity,
                     "fuel_remaining": sat.fuel_remaining,
                     "status": sat.status,
-                    "at_risk": sat.object_id in self.collision_risks
+                    "at_risk": sat.object_id in self.collision_risks,
+                    "scheduled_maneuvers": getattr(sat, 'scheduled_maneuvers', []),
+                    "in_recovery": getattr(sat, 'in_recovery', False)
                 }
                 for sat in satellites
             ],
@@ -380,7 +585,10 @@ class SimulationEngine:
             ],
             "threats": self.threat_count,
             "collisions": collisions,  # Enhanced with full details
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "simulation_time": round(self.simulation_time, 2),
+            "maneuvers_executed": self.maneuvers_executed,
+            "satellites_in_graveyard": len(self.satellites_in_graveyard)
         }
     
     def apply_maneuver(self, satellite_id: str, delta_v: List[float]):

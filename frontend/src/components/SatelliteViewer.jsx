@@ -11,7 +11,8 @@ function Earth() {
   
   useFrame(() => {
     if (earthRef.current) {
-      earthRef.current.rotation.y += 0.001
+      // Slower, more noticeable rotation
+      earthRef.current.rotation.y += 0.005
     }
   })
 
@@ -25,7 +26,17 @@ function Earth() {
         color="#1e40af"
         emissive="#0a1f5f"
         emissiveIntensity={0.3}
+        map={null}
       />
+      {/* Add atmosphere glow */}
+      <mesh scale={[1.02, 1.02, 1.02]}>
+        <sphereGeometry args={[earthRadius, 32, 32]} />
+        <meshBasicMaterial 
+          color="#4fc3f7"
+          transparent
+          opacity={0.1}
+        />
+      </mesh>
     </mesh>
   )
 }
@@ -343,8 +354,16 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
           <div>Satellites: {stats.satellites}</div>
           <div>Debris: {stats.debris}</div>
           <div>Visible: {visibleDebris.length} debris</div>
+          <div>At Risk: {satellitesAtRisk.size}</div>
+          <div>Collisions: {collisions.length}</div>
           <div>Scale: 1:500</div>
         </div>
+        {satellitesAtRisk.size > 0 && (
+          <div className="mt-2 p-2 bg-red-900 bg-opacity-50 rounded border border-red-500">
+            <div className="text-red-400 font-bold text-xs">⚠️ THREATS DETECTED</div>
+            <div className="text-red-300 text-xs">{satellitesAtRisk.size} satellites at risk</div>
+          </div>
+        )}
       </div>
 
       {/* Camera hint */}

@@ -20,3 +20,19 @@ TIME_STEP = 10  # High-precision 10-second timestep
 
 # Earth radius (km)
 EARTH_RADIUS = 6371.0
+
+# Fuel thresholds
+LOW_FUEL_THRESHOLD = 5.0  # Percentage
+CRITICAL_FUEL_THRESHOLD = 10.0  # Percentage
+
+# Graveyard orbit altitude (km above LEO)
+GRAVEYARD_ALTITUDE = 2500.0
+
+# Thruster cooldown (seconds)
+THRUSTER_COOLDOWN = 3600.0
+
+# Communication delay (seconds)
+COMMUNICATION_DELAY = 10.0
+
+# Maneuver execution tolerance (seconds)
+MANEUVER_EXECUTION_TOLERANCE = 5.0

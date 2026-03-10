@@ -112,6 +112,51 @@ async def health():
         "update_interval": simulation_engine.update_interval
     }
 
+@app.get("/debug/force-collisions")
+async def force_collisions():
+    """Debug endpoint to force collision detection and show results"""
+    simulation_engine.detect_collisions()
+    
+    satellites = telemetry_service.get_all_satellites()
+    at_risk = [sat for sat in satellites if sat.object_id in simulation_engine.collision_risks]
+    
+    return {
+        "total_satellites": len(satellites),
+        "satellites_at_risk": len(at_risk),
+        "threat_count": simulation_engine.threat_count,
+        "collision_risks": list(simulation_engine.collision_risks),
+        "at_risk_satellites": [
+            {
+                "id": sat.object_id,
+                "status": sat.status,
+                "position": sat.position,
+                "fuel": sat.fuel_remaining
+            }
+            for sat in at_risk
+        ]
+    }
+
+@app.get("/debug/collision-debris")
+async def get_collision_debris():
+    """Debug endpoint to show collision debris objects"""
+    debris = telemetry_service.get_all_debris()
+    collision_debris = [
+        {
+            "id": deb.object_id,
+            "position": deb.position,
+            "velocity": deb.velocity,
+            "size": deb.size_estimate
+        }
+        for deb in debris 
+        if "IMMEDIATE" in deb.object_id or "CROSS" in deb.object_id or "CHASE" in deb.object_id
+    ]
+    
+    return {
+        "total_debris": len(debris),
+        "collision_debris_count": len(collision_debris),
+        "collision_debris": collision_debris
+    }
+
 @app.websocket("/ws/simulation")
 async def websocket_simulation(websocket: WebSocket):
     await manager.connect(websocket)

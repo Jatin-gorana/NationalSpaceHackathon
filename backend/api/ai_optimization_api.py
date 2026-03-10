@@ -184,7 +184,7 @@ async def get_ai_status():
 async def auto_resolve_collisions():
     """
     Automatically resolve all collision risks using AI optimization
-    Applies maneuvers to satellites at risk to avoid collisions
+    Schedules maneuvers for satellites at risk to avoid collisions
     """
     from services.simulation_engine import simulation_engine
     
@@ -202,31 +202,58 @@ async def auto_resolve_collisions():
     resolved = []
     
     for satellite in at_risk_satellites:
-        # Calculate avoidance maneuver (simple: perpendicular to velocity)
-        import numpy as np
-        vel = np.array(satellite.velocity)
-        vel_mag = np.linalg.norm(vel)
+        # Skip if already has scheduled maneuvers
+        if getattr(satellite, 'scheduled_maneuvers', []):
+            continue
         
-        # Create perpendicular delta-v (0.05 km/s = 50 m/s)
-        perpendicular = np.array([-vel[1], vel[0], 0])
-        if np.linalg.norm(perpendicular) > 0:
-            perpendicular = perpendicular / np.linalg.norm(perpendicular)
-        delta_v = perpendicular * 0.05  # 50 m/s maneuver
+        # Get collision info for this satellite
+        collision_info = None
+        if hasattr(simulation_engine, 'current_collision_details'):
+            collision_info = simulation_engine.current_collision_details.get(satellite.object_id)
         
-        # Apply maneuver
-        success = simulation_engine.apply_maneuver(satellite.object_id, delta_v.tolist())
+        if not collision_info:
+            # Use predicted collisions
+            for pred in simulation_engine.predicted_collisions:
+                if pred['satellite_id'] == satellite.object_id:
+                    collision_info = pred
+                    break
         
-        if success:
+        if not collision_info:
+            continue
+        
+        # Plan avoidance maneuver
+        maneuver = maneuver_planner.optimize_avoidance_maneuver(
+            satellite.object_id,
+            satellite.position,
+            satellite.velocity,
+            collision_info,
+            satellite.fuel_remaining
+        )
+        
+        if maneuver:
+            # Schedule the maneuver
+            maneuver["execution_time_seconds"] = simulation_engine.simulation_time + maneuver.get("execution_time_hours", 0.5) * 3600
+            
+            if not hasattr(satellite, 'scheduled_maneuvers'):
+                satellite.scheduled_maneuvers = []
+            satellite.scheduled_maneuvers.append(maneuver)
+            
+            telemetry_service.update_satellite(satellite)
+            
             resolved.append({
                 "satellite_id": satellite.object_id,
-                "delta_v": delta_v.tolist(),
-                "fuel_remaining": satellite.fuel_remaining
+                "maneuver_type": maneuver["maneuver_type"],
+                "delta_v_magnitude": maneuver["delta_v_magnitude"],
+                "fuel_cost": maneuver["fuel_cost_percent"],
+                "execution_time_hours": maneuver.get("execution_time_hours", 0.5),
+                "target": collision_info.get("debris_id", "unknown")
             })
     
     return {
         "status": "resolved",
-        "message": f"Applied avoidance maneuvers to {len(resolved)} satellites",
+        "message": f"Scheduled avoidance maneuvers for {len(resolved)} satellites",
         "satellites_resolved": len(resolved),
         "total_at_risk": len(at_risk_satellites),
-        "maneuvers": resolved
+        "maneuvers": resolved,
+        "note": "Maneuvers will execute automatically at scheduled time"
     }
