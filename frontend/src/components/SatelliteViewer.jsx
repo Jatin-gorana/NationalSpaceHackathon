@@ -12,7 +12,7 @@ function Earth() {
   useFrame(() => {
     if (earthRef.current) {
       // Slower, more noticeable rotation
-      earthRef.current.rotation.y += 0.005
+      earthRef.current.rotation.y += 0.0004
     }
   })
 
@@ -41,11 +41,12 @@ function Earth() {
   )
 }
 
-function Satellite({ position, id, hasCollision }) {
+function Satellite({ position, id, riskStatus }) {
   const groupRef = useRef()
   const meshRef = useRef()
+  const hasCollision = riskStatus === 'danger'
   
-  // Update position every frame
+  // Update position every frame with smooth interpolation
   useFrame(() => {
     if (groupRef.current && position && position.length === 3) {
       const scaledPos = [
@@ -53,13 +54,24 @@ function Satellite({ position, id, hasCollision }) {
         position[1] * VISUAL_SCALE,
         position[2] * VISUAL_SCALE
       ]
+      
+      // Smooth position update
       groupRef.current.position.set(scaledPos[0], scaledPos[1], scaledPos[2])
+      
+      // Scale effect for collision risk
+      if (hasCollision) {
+        groupRef.current.scale.setScalar(1.3 + Math.sin(Date.now() * 0.01) * 0.2)
+      } else {
+        groupRef.current.scale.setScalar(1.0)
+      }
     }
     
     // Pulse effect for collision risk
     if (meshRef.current && hasCollision) {
       meshRef.current.material.emissiveIntensity = 
         0.8 + Math.sin(Date.now() * 0.01) * 0.4
+    } else if (meshRef.current) {
+      meshRef.current.material.emissiveIntensity = 0.8
     }
   })
 
@@ -94,7 +106,7 @@ function Satellite({ position, id, hasCollision }) {
 function Debris({ position }) {
   const meshRef = useRef()
   
-  // Update position every frame
+  // Update position every frame with smooth movement
   useFrame(() => {
     if (meshRef.current && position && position.length === 3) {
       const scaledPos = [
@@ -102,7 +114,13 @@ function Debris({ position }) {
         position[1] * VISUAL_SCALE,
         position[2] * VISUAL_SCALE
       ]
+      
+      // Smooth position update
       meshRef.current.position.set(scaledPos[0], scaledPos[1], scaledPos[2])
+      
+      // Add rotation for visual effect
+      meshRef.current.rotation.x += 0.02
+      meshRef.current.rotation.y += 0.01
     }
   })
 
@@ -205,7 +223,13 @@ function CollisionWarningLine({ satellitePos, debrisPos }) {
           itemSize={3}
         />
       </bufferGeometry>
-      <lineBasicMaterial color="#ff0000" linewidth={2} transparent opacity={0.6} />
+      <lineBasicMaterial 
+        color="#ff0000" 
+        linewidth={3} 
+        transparent 
+        opacity={0.8}
+        fog={false}
+      />
     </line>
   )
 }
@@ -221,25 +245,45 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
   }, [satellites, debris])
 
   const satellitesAtRisk = useMemo(() => {
-    return new Set(collisions.map(c => c.satellite_id))
-  }, [collisions])
+    return new Set(satellites.filter(s => s.risk_status === 'danger').map(s => s.object_id))
+  }, [satellites])
 
   // Create map of satellite and debris positions for collision lines
   const collisionLines = useMemo(() => {
     const lines = []
-    for (const collision of collisions) {
-      const sat = satellites.find(s => s.object_id === collision.satellite_id)
-      const deb = debris.find(d => d.object_id === collision.debris_id)
-      if (sat && deb) {
-        lines.push({
-          satellitePos: sat.position,
-          debrisPos: deb.position,
-          severity: collision.severity
-        })
+    const COLLISION_THRESHOLD = 100 * 1000  // 100 km in meters (scaled)
+    
+    for (const satellite of satellites) {
+      if (satellite.risk_status === 'danger') {
+        // Find the closest debris to this satellite
+        let closestDebris = null
+        let minDistance = Infinity
+        
+        for (const deb of debris) {
+          if (!satellite.position || !deb.position) continue
+          
+          const dx = satellite.position[0] - deb.position[0]
+          const dy = satellite.position[1] - deb.position[1]
+          const dz = satellite.position[2] - deb.position[2]
+          const distance = Math.sqrt(dx*dx + dy*dy + dz*dz)
+          
+          if (distance < minDistance) {
+            minDistance = distance
+            closestDebris = deb
+          }
+        }
+        
+        if (closestDebris && minDistance < 100) {
+          lines.push({
+            satellitePos: satellite.position,
+            debrisPos: closestDebris.position,
+            severity: 'high'
+          })
+        }
       }
     }
     return lines
-  }, [collisions, satellites, debris])
+  }, [satellites, debris])
 
   // Limit debris rendering for performance (show closest 100)
   const visibleDebris = useMemo(() => {
@@ -283,12 +327,12 @@ function SatelliteViewer({ satellites = [], debris = [], collisions = [] }) {
             <Satellite 
               position={sat.position}
               id={sat.object_id}
-              hasCollision={satellitesAtRisk.has(sat.object_id)}
+              riskStatus={sat.risk_status}
             />
             <OrbitLine 
               position={sat.position}
               velocity={sat.velocity}
-              color={satellitesAtRisk.has(sat.object_id) ? "#ff0000" : "#00ffff"}
+              color={sat.risk_status === 'danger' ? "#ff0000" : "#00ffff"}
             />
           </React.Fragment>
         ))}

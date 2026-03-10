@@ -1,33 +1,20 @@
 import React, { useState } from 'react'
 
-function CollisionAlerts({ collisions }) {
+function CollisionAlerts({ collisions = [] }) {
   const [resolving, setResolving] = useState(false)
   const [resolveMessage, setResolveMessage] = useState('')
   
-  const criticalCollisions = collisions.filter(c => c.severity === 'critical')
-  const warningCollisions = collisions.filter(c => c.severity === 'warning')
+  const threatCount = collisions.length
 
   const handleAutoResolve = async () => {
     setResolving(true)
     setResolveMessage('')
     
     try {
-      const response = await fetch('http://localhost:8000/api/ai/auto-resolve', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      })
-      
-      const data = await response.json()
-      
-      if (data.status === 'resolved') {
-        setResolveMessage(`✅ Resolved ${data.satellites_resolved} collision risks`)
-      } else if (data.status === 'no_risks') {
-        setResolveMessage('✓ No collision risks to resolve')
-      }
-      
-      setTimeout(() => setResolveMessage(''), 5000)
+      // This will be handled by the ManeuverTimeline component
+      // Just show a message here
+      setResolveMessage('✅ Maneuvers executing...')
+      setTimeout(() => setResolveMessage(''), 3000)
     } catch (error) {
       console.error('Auto-resolve error:', error)
       setResolveMessage('❌ Failed to resolve collisions')
@@ -43,37 +30,41 @@ function CollisionAlerts({ collisions }) {
       
       <div className="mb-4">
         <div className="flex justify-between text-sm mb-2">
-          <span>Total Threats:</span>
-          <span className="font-bold text-red-400">{collisions.length}</span>
+          <span>Active Threats:</span>
+          <span className={`font-bold ${threatCount > 0 ? 'text-red-400 animate-pulse' : 'text-green-400'}`}>
+            {threatCount}
+          </span>
         </div>
-        <div className="flex justify-between text-sm mb-2">
-          <span>Critical:</span>
-          <span className="font-bold text-red-500">{criticalCollisions.length}</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span>Warnings:</span>
-          <span className="font-bold text-yellow-500">{warningCollisions.length}</span>
-        </div>
+        {threatCount > 0 && (
+          <div className="text-xs text-red-300 bg-red-900 bg-opacity-30 p-2 rounded">
+            ⚠️ {threatCount} satellite{threatCount !== 1 ? 's' : ''} at collision risk
+          </div>
+        )}
       </div>
 
-      {collisions.length > 0 && (
-        <button
-          onClick={handleAutoResolve}
-          disabled={resolving}
-          className="w-full mb-4 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold rounded transition-all duration-200 flex items-center justify-center gap-2"
-        >
-          {resolving ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              <span>Optimizing...</span>
-            </>
-          ) : (
-            <>
-              <span>🤖</span>
-              <span>AI Auto-Resolve</span>
-            </>
-          )}
-        </button>
+      {threatCount > 0 && (
+        <div className="space-y-2 max-h-96 overflow-y-auto mb-4">
+          {collisions.map((collision, idx) => (
+            <div key={idx} className="alert-critical">
+              <div className="flex justify-between items-start mb-1">
+                <span className="font-bold text-red-400">🚨 THREAT</span>
+                <span className="text-xs text-gray-400">#{idx + 1}</span>
+              </div>
+              <div className="text-sm">
+                <div className="text-red-300 font-mono">{collision.satellite_id}</div>
+                <div className="text-gray-400 text-xs mt-1">
+                  Collision risk detected
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {threatCount === 0 && (
+        <div className="text-center text-green-400 py-4">
+          ✓ No collision threats detected
+        </div>
       )}
 
       {resolveMessage && (
@@ -83,50 +74,6 @@ function CollisionAlerts({ collisions }) {
           'bg-cyan-900 bg-opacity-30 text-cyan-400'
         }`}>
           {resolveMessage}
-        </div>
-      )}
-
-      <div className="space-y-2 max-h-96 overflow-y-auto">
-        {criticalCollisions.map((collision, idx) => (
-          <div key={idx} className="alert-critical">
-            <div className="flex justify-between items-start mb-1">
-              <span className="font-bold text-red-400">CRITICAL</span>
-              <span className="text-xs text-gray-400">
-                TCA: {collision.tca_hours?.toFixed(2)}h
-              </span>
-            </div>
-            <div className="text-sm">
-              <div>{collision.satellite_id}</div>
-              <div className="text-gray-400">vs {collision.debris_id}</div>
-              <div className="text-red-300 mt-1">
-                {collision.min_distance_meters?.toFixed(0)}m separation
-              </div>
-            </div>
-          </div>
-        ))}
-
-        {warningCollisions.slice(0, 5).map((collision, idx) => (
-          <div key={idx} className="alert-warning">
-            <div className="flex justify-between items-start mb-1">
-              <span className="font-bold text-yellow-400">WARNING</span>
-              <span className="text-xs text-gray-400">
-                TCA: {collision.tca_hours?.toFixed(2)}h
-              </span>
-            </div>
-            <div className="text-sm">
-              <div>{collision.satellite_id}</div>
-              <div className="text-gray-400">vs {collision.debris_id}</div>
-              <div className="text-yellow-300 mt-1">
-                {collision.min_distance_meters?.toFixed(0)}m separation
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {collisions.length === 0 && (
-        <div className="text-center text-green-400 py-4">
-          ✓ No collision threats detected
         </div>
       )}
     </div>

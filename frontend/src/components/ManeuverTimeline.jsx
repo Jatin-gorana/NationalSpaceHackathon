@@ -64,25 +64,49 @@ function ManeuverTimeline({ satellites }) {
   const handleAutoResolve = async () => {
     setAutoResolveLoading(true)
     try {
-      const response = await axios.post('/api/ai/auto-resolve')
-      console.log('✅ Auto-resolve result:', response.data)
+      console.log('🚀 Executing auto-resolve...')
       
-      // Show success message
-      if (response.data.satellites_resolved > 0) {
-        alert(`✅ Scheduled maneuvers for ${response.data.satellites_resolved} satellites at risk!`)
+      // Get satellites at risk
+      const atRiskSatellites = satellites.filter(sat => sat.risk_status === 'danger')
+      console.log(`Found ${atRiskSatellites.length} satellites at risk`)
+      
+      if (atRiskSatellites.length === 0) {
+        alert('ℹ️ No satellites at risk detected')
+        setAutoResolveLoading(false)
+        return
+      }
+      
+      // Execute maneuvers for each at-risk satellite
+      let resolved = 0
+      for (const satellite of atRiskSatellites) {
+        try {
+          const response = await fetch(`http://localhost:8000/api/maneuver/execute/${satellite.object_id}`, {
+            method: 'POST'
+          })
+          
+          if (response.ok) {
+            const result = await response.json()
+            console.log(`✅ Maneuver executed for ${satellite.object_id}:`, result)
+            resolved++
+          }
+        } catch (error) {
+          console.error(`❌ Failed to execute maneuver for ${satellite.object_id}:`, error)
+        }
+      }
+      
+      if (resolved > 0) {
+        alert(`✅ Executed collision avoidance maneuvers for ${resolved} satellites!`)
+        console.log(`🎉 Successfully resolved ${resolved} collision risks`)
       } else {
-        alert('ℹ️ No collision risks detected')
+        alert('❌ Failed to execute maneuvers')
       }
       
-      // Reload maneuvers if satellite is selected
-      if (selectedSat) {
-        await loadManeuvers(selectedSat)
-      }
     } catch (error) {
-      console.error('Auto-resolve failed:', error)
+      console.error('❌ Auto-resolve failed:', error)
       alert('❌ Auto-resolve failed')
+    } finally {
+      setAutoResolveLoading(false)
     }
-    setAutoResolveLoading(false)
   }
 
   const getManeuverStatus = (maneuver, simulationTime) => {
@@ -138,7 +162,7 @@ function ManeuverTimeline({ satellites }) {
           <option value="">-- Select --</option>
           {satellites.map(sat => (
             <option key={sat.object_id} value={sat.object_id}>
-              {sat.object_id} {sat.at_risk ? '⚠️' : ''} {sat.in_recovery ? '🔄' : ''}
+              {sat.object_id} {sat.risk_status === 'danger' ? '⚠️' : ''} {sat.in_recovery ? '🔄' : ''}
             </option>
           ))}
         </select>

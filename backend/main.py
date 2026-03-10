@@ -3,12 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
 import json
+from datetime import datetime
 from api.telemetry_api import router as telemetry_router
 from api.maneuver_api import router as maneuver_router
 from api.simulation_api import router as simulation_router
 from api.maneuver_schedule_api import router as maneuver_schedule_router
 from api.ai_optimization_api import router as ai_optimization_router
-from services.simulation_engine import simulation_engine
+from services.simple_simulation_engine import simple_simulation_engine as simulation_engine
+from services.telemetry_service import telemetry_service
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -178,28 +180,70 @@ async def get_collision_debris():
         "collision_debris": collision_debris
     }
 
+@app.post("/api/maneuver/execute/{satellite_id}")
+async def execute_maneuver(satellite_id: str):
+    """Execute collision avoidance maneuver"""
+    print(f"🚀 Executing maneuver for {satellite_id}")
+    
+    success = simulation_engine.apply_maneuver(satellite_id)
+    
+    if success:
+        return {
+            "status": "success",
+            "message": f"Maneuver executed for {satellite_id}",
+            "satellite_id": satellite_id
+        }
+    else:
+        return {
+            "status": "error",
+            "message": f"Satellite {satellite_id} not found"
+        }
+
 @app.websocket("/ws/simulation")
 async def websocket_simulation(websocket: WebSocket):
-    await manager.connect(websocket)
+    """Real-time simulation WebSocket endpoint - 20Hz updates"""
+    print("🔌 WebSocket connection attempt")
+    
     try:
-        # Send initial state immediately
-        initial_state = simulation_engine.get_state()
-        await websocket.send_json(initial_state)
+        await websocket.accept()
+        print("✅ WebSocket connected")
         
-        # Keep connection alive and handle pings
+        # Send initial state immediately
+        try:
+            initial_state = simulation_engine.get_state()
+            await websocket.send_json(initial_state)
+            print("📡 Initial state sent")
+        except Exception as e:
+            print(f"❌ Error sending initial state: {e}")
+        
+        # Add to connection manager
+        manager.active_connections.append(websocket)
+        print(f"📊 Total connections: {len(manager.active_connections)}")
+        
+        # Keep connection alive with ping/pong
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+                # Wait for ping with timeout
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=2.0)
                 if data == "ping":
                     await websocket.send_text("pong")
+                    print("🏓 Ping/pong")
             except asyncio.TimeoutError:
-                # No message received, continue
+                # No ping received, continue (normal)
                 pass
+            except WebSocketDisconnect:
+                print("🔌 Client disconnected")
+                break
             except Exception as e:
                 print(f"❌ WebSocket receive error: {e}")
                 break
+                
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        print("🔌 WebSocket disconnected")
     except Exception as e:
-        print(f"❌ WebSocket error: {e}")
-        manager.disconnect(websocket)
+        print(f"❌ WebSocket connection error: {e}")
+    finally:
+        # Clean up connection
+        if websocket in manager.active_connections:
+            manager.active_connections.remove(websocket)
+        print(f"🧹 Connection cleaned up. Remaining: {len(manager.active_connections)}")
