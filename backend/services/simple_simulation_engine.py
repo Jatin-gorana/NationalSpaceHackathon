@@ -105,7 +105,8 @@ class SimpleSimulationEngine:
         self.collision_risks = set()
         self.update_interval = 0.05  # 20 Hz
         self.last_threat_time = 0.0
-        self.threat_generation_interval = np.random.uniform(120, 180)  # 2-3 minutes
+        self.threat_generation_interval = np.random.uniform(60, 120)  # 1-2 minutes (faster threats)
+        self.min_background_debris = 10
         
     def initialize_constellation(self):
         """Create satellites and debris - guaranteed to work"""
@@ -141,13 +142,13 @@ class SimpleSimulationEngine:
         # Pick a random satellite
         target_sat = np.random.choice(self.satellites)
         
-        # Create debris very close to its orbit
+        # Create debris VERY CLOSE to its orbit (within collision threshold)
         threat_debris = SimpleDebris(
             f"THREAT-{len(self.debris)+1:03d}",
-            radius=target_sat.radius + np.random.uniform(-10, 10),  # Within 10 km
-            angle=target_sat.angle + np.random.uniform(-0.1, 0.1),  # Close angle
-            inclination=target_sat.inclination + np.random.uniform(-0.05, 0.05),
-            angular_velocity=target_sat.angular_velocity + np.random.uniform(-0.0001, 0.0001)
+            radius=target_sat.radius + np.random.uniform(-5, 5),  # Within 5 km radius
+            angle=target_sat.angle + np.random.uniform(-0.05, 0.05),  # Very close angle
+            inclination=target_sat.inclination + np.random.uniform(-0.02, 0.02),
+            angular_velocity=target_sat.angular_velocity + np.random.uniform(-0.00005, 0.00005)  # Nearly same speed
         )
         
         self.debris.append(threat_debris)
@@ -170,11 +171,11 @@ class SimpleSimulationEngine:
         # Detect collisions
         self.detect_collisions()
         
-        # Generate random threats every 2-3 minutes
+        # Generate random threats every 1-2 minutes
         if self.simulation_time - self.last_threat_time > self.threat_generation_interval:
             self.create_collision_threat()
             self.last_threat_time = self.simulation_time
-            self.threat_generation_interval = np.random.uniform(120, 180)
+            self.threat_generation_interval = np.random.uniform(60, 120)  # 1-2 minutes
         
         # Log every 100 ticks (5 seconds)
         if int(self.simulation_time / dt) % 100 == 0:
@@ -212,6 +213,22 @@ class SimpleSimulationEngine:
                 satellite.angular_velocity = np.random.uniform(0.0008, 0.0015)
                 satellite.risk_status = "safe"
                 satellite.fuel -= 5.0
+                
+                # Remove threat debris that was threatening this satellite
+                debris_to_remove = []
+                sat_pos = np.array(satellite.get_position())
+                for idx, debris in enumerate(self.debris):
+                    if "THREAT" in debris.id:
+                        deb_pos = np.array(debris.get_position())
+                        distance = np.linalg.norm(sat_pos - deb_pos)
+                        if distance < 150.0:  # Remove threats within 150km
+                            debris_to_remove.append(idx)
+                
+                # Remove in reverse order to maintain indices
+                for idx in sorted(debris_to_remove, reverse=True):
+                    removed = self.debris.pop(idx)
+                    print(f"🗑️ Threat debris removed by maneuver: {removed.id}")
+                
                 print(f"✅ Maneuver executed for {satellite_id}: new radius {satellite.radius:.0f} km, fuel {satellite.fuel:.1f}%")
                 return True
         return False
